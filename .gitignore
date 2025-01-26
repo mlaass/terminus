@@ -1,0 +1,7 @@
+*zig-cache*
+*zig-out*
+.pytest_cache
+**/__pycache__
+*.pyc
+*/**.pyc
+*.so

@@ -1,15 +1,42 @@
+[build-system]
+requires = ["poetry-core", "ziggy-pydust==0.23.2"]
+build-backend = "poetry.core.masonry.api"
+
 [tool.poetry]
-name = "terminus"
+name = "termynus"
 version = "0.1.0"
-description = ""
-authors = ["Moritz Laass <moritz.laass@gmail.com>"]
+description = "Terminal utilities implemented in Zig"
+authors = ["Your Name <your.email@example.com>"]
 readme = "README.md"
+packages = [{ include = "termynus" }]
+include = [
+    { path = "src/", format = "sdist" },
+    { path = "termynus/*.so", format = "wheel" },
+    "termynus/*.pyi"
+]
+
+[tool.poetry.build]
+script = "build.py"
 
 [tool.poetry.dependencies]
 python = "^3.12"
-pytest = "^8.3.4"
 
+[tool.poetry.group.dev.dependencies]
+ziggy-pydust = "0.23.2"
+pytest = "^8.0.0"
+ruff = "^0.4.0"
+black = "^23.7.0"
 
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+[tool.black]
+line-length = 120
+
+[tool.ruff]
+line-length = 120
+select = ["F", "E", "W", "UP", "I001", "I002"]
+
+[tool.poetry.scripts]
+generate-stubs = "scripts.generate_stubs:main"
+
+[[tool.pydust.ext_module]]
+name = "termynus._lib"
+root = "src/term.zig"
