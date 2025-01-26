@@ -1,3 +1,3 @@
-# Terminus
+# Termynus
 
-A term parser and interpreter.
+A term parsing and evaluation.
