@@ -1,5 +1,24 @@
 const std = @import("std");
 const py = @import("pydust");
+const term_parser = @import("term_parser.zig");
+
+// Export Python functions
+pub fn tokenize(args: struct { expression: []const u8 }) !py.PyList {
+    const allocator = std.heap.page_allocator;
+
+    // const expression: []const u8 = try py.PyString.asSlice(args.expression);
+    std.debug.print("expression: {s}\n", .{args.expression});
+
+    const tokens = try term_parser.tokenize(allocator, args.expression);
+    const py_tokens = try py.PyList.new(0);
+    // const pt = try py.PyList.new(tokens.len);
+    for (tokens) |token| {
+        const py_token = try py.PyString.create(token.value);
+        std.debug.print("token: {} {s}\n", .{ token.type, token.value });
+        try py_tokens.append(py_token);
+    }
+    return py_tokens;
+}
 
 // A simple fibonacci implementation.
 pub fn nth_fibonacci_iterative(args: struct { n: u64 }) u64 {
