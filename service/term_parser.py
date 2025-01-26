@@ -2,26 +2,6 @@ import re
 from datetime import datetime
 
 # Define the regex pattern for tokens
-# token_regex = re.compile(
-#     r"\s*(=>|//|\*\*|==|!=|<=|>=|<<|>>|\|{1,2}|&|\^|-?\d*\.\d+|-?\.\d+|-?\d+\b|\$\w+|\b\w+\b|\d+\.\d+|\.\d+|\d+\b|[+\-*/%(),<>!=])\s*"
-# )
-# token_regex = re.compile(
-#     r'\s*(=>|//|\*\*|==|!=|<=|>=|<<|>>|\|{1,2}|&|\^|-?\d*\.\d+|-?\.\d+|-?\d+\b|\$\w+|\b\w+\b|\d+\.\d+|\.\d+|\d+\b|"[^"]*"|\'[^\']*\'|[+\-*/%(),<>!=])\s*'
-# )
-# token_regex = re.compile(
-#     r"""\s*(=>|//|\*\*|==|!=|<=|>=|<<|>>|\|{1,2}|&|\^|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|-?\d*\.\d+|-?\.\d+|-?\d+\b|\$\w+|\b\w+\b|\d+\.\d+|\.\d+|\d+\b|[+\-*/%(),<>!=])\s*"""
-# )
-
-# parses string literals 'string' or "string" as well as datesting literals: d'isostring' or d"isostring"
-# token_regex = re.compile(
-#     r"""\s*(=>|//|\*\*|==|!=|<=|>=|<<|>>|\|{1,2}|&|\^|d?"(?:\\.|[^"\\])*"|d?'(?:\\.|[^'\\])*'|-?\d*\.\d+|-?\.\d+|-?\d+\b|\$\w+|\b\w+\b|\d+\.\d+|\.\d+|\d+\b|[+\-*/%(),<>!=])\s*"""
-# )
-
-# adding array literals
-token_regex = re.compile(
-    r"""\s*(=>|//|\*\*|==|!=|<=|>=|<<|>>|\|{1,2}|&|\^|d?"(?:\\.|[^"\\])*"|d?'(?:\\.|[^'\\])*'|\[|\]|,|-?\d*\.\d+|-?\.\d+|-?\d+\b|\$\w+|\b\w+\b|\d+\.\d+|\.\d+|\d+\b|[+\-*/%(),<>!=])\s*"""
-)
-
 token_regex = re.compile(
     r'\s*(=>|//|\*\*|==|!=|<=|>=|<<|>>|\|{1,2}|&|\^|d"(?:\\.|[^"\\])*"|d\'(?:\\.|[^\'\\])*\'|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|-\d*\.\d+|-\.\d+|-\d+\b|\$[\w\.]+|\b[\w\.]+\b|\d+\.\d+|\.\d+|\d+\b|[+\-*/%(),<>!=])\s*'
 )
@@ -90,34 +70,34 @@ precedence = {
 }
 
 associativity = {
-    "or": "Left",
-    "and": "Left",
-    "|": "Left",
-    "xor": "Left",
-    "&": "Left",
-    "==": "Left",
-    "!=": "Left",
-    "<": "Left",
-    ">": "Left",
-    "<=": "Left",
-    ">=": "Left",
-    "+": "Left",
-    "-": "Left",
-    "*": "Left",
-    "/": "Left",
-    "//": "Left",
-    "mod": "Left",
-    "%": "Left",
-    "<<": "Left",
-    ">>": "Left",
-    "**": "Right",  # exponentiation is right-associative
-    "not": "Right",
-    "floor": "Right",
-    "ceil": "Right",
-    "abs": "Right",
-    "int": "Right",
-    "float": "Right",
-    "bool": "Right",
+    "or": "L",
+    "and": "L",
+    "|": "L",
+    "xor": "L",
+    "&": "L",
+    "==": "L",
+    "!=": "L",
+    "<": "L",
+    ">": "L",
+    "<=": "L",
+    ">=": "L",
+    "+": "L",
+    "-": "L",
+    "*": "L",
+    "/": "L",
+    "//": "L",
+    "mod": "L",
+    "%": "L",
+    "<<": "L",
+    ">>": "L",
+    "**": "R",  # exponentiation is right-associative
+    "not": "R",
+    "floor": "R",
+    "ceil": "R",
+    "abs": "R",
+    "int": "R",
+    "float": "R",
+    "bool": "R",
 }
 
 
@@ -274,9 +254,9 @@ def shunting_yard(tokens):
                 operator_stack
                 and is_operator(operator_stack[-1])
                 and (
-                    (associativity[token] == "Left" and get_precedence(token) <= get_stack_precedence(operator_stack))
+                    (associativity[token] == "L" and get_precedence(token) <= get_stack_precedence(operator_stack))
                     or (
-                        associativity[token] == "Right" and get_precedence(token) < get_stack_precedence(operator_stack)
+                        associativity[token] == "R" and get_precedence(token) < get_stack_precedence(operator_stack)
                     )
                 )
             ):
@@ -354,13 +334,13 @@ def parse_to_tree(expression):
     return build_tree(rpn)
 
 
-exp = "addDays(startDate, 10) < addDays(endDate, -5) and not userActive()"
-exp = "addDays(d'2023-01-01', 2) == d'2023-01-03'"
+# exp = "addDays(startDate, 10) < addDays(endDate, -5) and not userActive()"
+# exp = "addDays(d'2023-01-01', 2) == d'2023-01-03'"
 
-res = tokenize(exp)
-print(res)
-res2 = shunting_yard(res)
-print(f"----------")
-print(res2)
-print(f"----------")
-print(parse_to_tree(exp))
+# res = tokenize(exp)
+# print(res)
+# res2 = shunting_yard(res)
+# print(f"----------")
+# print(res2)
+# print(f"----------")
+# print(parse_to_tree(exp))
