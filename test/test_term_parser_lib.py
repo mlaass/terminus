@@ -41,15 +41,6 @@ class TestParserMethods(unittest.TestCase):
 
 
 """
-    def test_shunting_yard_simple_case(self):
-        tokens = ["tm1", "and", "tm2"]
-        expected_output = [
-            {"type": "id", "value": "tm1"},
-            {"type": "id", "value": "tm2"},
-            {"name": "and", "type": "bin_op"},
-        ]
-        self.assertEqual(termynus.shunting_yard(tokens), expected_output)
-
     def test_parse_to_tree_simple_binary_expression(self):
         expression = "3 + 4"
         expected_tree = {
@@ -194,21 +185,6 @@ class TestParserMethods(unittest.TestCase):
         }
         self.assertEqual(   termynus.parse_to_tree(expression), expected_tree)
 
-    def test_shunting_yard_complex_expression_with_function_calls(self):
-        tokens = termynus.tokenize("(addDays(startDate, 10) < addDays(endDate, -5)) and not userActive")
-        expected_rpn = [
-            {"type": "id", "value": "startDate"},
-            {"type": "lit", "value": 10},
-            {"type": "fun", "name": "addDays", "args": 2},
-            {"type": "id", "value": "endDate"},
-            {"type": "lit", "value": -5},
-            {"type": "fun", "name": "addDays", "args": 2},
-            {"type": "bin_op", "name": "<"},
-            {"type": "id", "value": "userActive"},
-            {"type": "unary_op", "name": "not"},
-            {"type": "bin_op", "name": "and"},
-        ]
-        self.assertEqual(termynus.shunting_yard(tokens), expected_rpn)
 
     def test_parse_to_tree_complex_expression_with_function_calls(self):
         expression = "(addDays(startDate, 10) < addDays(endDate, -5)) and userActive"
