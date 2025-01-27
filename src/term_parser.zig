@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const TokenType = enum {
+pub const TokenType = enum {
     identifier,
     number,
     string,
@@ -13,24 +13,24 @@ const TokenType = enum {
     comma,
 };
 
-const Token = struct {
+pub const Token = struct {
     type: TokenType,
     value: []const u8,
 };
 
 // Token patterns for lexical analysis
-const patterns = struct {
+pub const patterns = struct {
     const whitespace = "\\s+";
     const operators = "=>|//|\\*\\*|==|!=|<=|>=|<<|>>|\\|{1,2}|&|\\^";
     const date_string = "d\"(?:\\\\.|[^\"\\\\])*\"|d'(?:\\\\.|[^'\\\\])*'";
     const string = "\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'";
-    const number = "-?\\d*\\.\\d+|-?\\.\\d+|-?\\d+\\b";
+    const number = "-?(?:\\d+\\.\\d*|\\.\\d+|\\d+)(?:[eE][+-]?\\d+)?";
     const identifier = "\\$[\\w\\.]+|\\b[\\w\\.]+\\b";
     const symbol = "[+\\-*/%(),<>!=]";
 };
 
 // Binary operators and their precedence
-const binary_operators = std.ComptimeStringMap(u8, .{
+pub const binary_operators = std.ComptimeStringMap(u8, .{
     .{ "+", 6 },
     .{ "-", 6 },
     .{ "*", 7 },
@@ -55,7 +55,7 @@ const binary_operators = std.ComptimeStringMap(u8, .{
 });
 
 // Unary operators
-const unary_operators = std.ComptimeStringMap(void, .{
+pub const unary_operators = std.ComptimeStringMap(void, .{
     .{ "not", {} },
     .{ "neg", {} },
     .{ "floor", {} },
@@ -66,8 +66,9 @@ const unary_operators = std.ComptimeStringMap(void, .{
     .{ "bool", {} },
 });
 
-const NodeType = enum {
-    literal,
+pub const NodeType = enum {
+    literal_integer,
+    literal_float,
     literal_string,
     literal_date,
     identifier,
@@ -77,12 +78,13 @@ const NodeType = enum {
     list,
 };
 
-const Node = struct {
+pub const Node = struct {
     type: NodeType,
     value: union {
-        literal: f64,
+        integer: i64,
+        float: f64,
         string: []const u8,
-        date: []const u8, // We'll keep dates as strings for now
+        date: []const u8,
         identifier: []const u8,
         operator: []const u8,
         function: struct {
@@ -97,7 +99,7 @@ const Node = struct {
 
     pub fn deinit(self: *Node, allocator: std.mem.Allocator) void {
         switch (self.type) {
-            .literal => {},
+            .literal_integer, .literal_float => {},
             .literal_string => allocator.free(self.value.string),
             .literal_date => allocator.free(self.value.date),
             .identifier => allocator.free(self.value.identifier),
@@ -145,6 +147,33 @@ pub fn tokenize(allocator: std.mem.Allocator, expression: []const u8) ![]Token {
         // Skip whitespace
         if (std.ascii.isWhitespace(expr[i])) {
             i += 1;
+            continue;
+        }
+
+        // Handle negative numbers: look for minus sign followed by digit or decimal point
+        if (expr[i] == '-' and i + 1 < expr.len and
+            (std.ascii.isDigit(expr[i + 1]) or expr[i + 1] == '.'))
+        {
+            // Find the end of the number
+            var j = i + 1;
+            var has_e = false;
+            while (j < expr.len) : (j += 1) {
+                const c = expr[j];
+                if (std.ascii.isDigit(c) or c == '.') continue;
+                if ((c == 'e' or c == 'E') and !has_e) {
+                    has_e = true;
+                    if (j + 1 < expr.len and (expr[j + 1] == '+' or expr[j + 1] == '-')) {
+                        j += 1;
+                    }
+                    continue;
+                }
+                break;
+            }
+            try tokens.append(.{
+                .type = .number,
+                .value = try allocator.dupe(u8, expr[i..j]),
+            });
+            i = j;
             continue;
         }
 
@@ -217,12 +246,24 @@ pub fn tokenize(allocator: std.mem.Allocator, expression: []const u8) ![]Token {
         }
 
         // Numbers
-        if (std.ascii.isDigit(expr[i]) or (expr[i] == '-' and i + 1 < expr.len and std.ascii.isDigit(expr[i + 1]))) {
-            var j = if (expr[i] == '-') i + 1 else i;
+        if (std.ascii.isDigit(expr[i]) or (expr[i] == '-' and i + 1 < expr.len and std.ascii.isDigit(expr[i + 1])) or (expr[i] == '.' and i + 1 < expr.len and std.ascii.isDigit(expr[i + 1]))) {
+            var j = if (expr[i] == '-' or expr[i] == '.') i + 1 else i;
             var has_dot = false;
+            var has_e = false;
+            var has_sign = false;
+            var e_index: usize = 0;
             while (j < expr.len) : (j += 1) {
                 if (expr[j] == '.' and !has_dot) {
                     has_dot = true;
+                    continue;
+                }
+                if (expr[j] == 'e' or expr[j] == 'E') {
+                    has_e = true;
+                    e_index = j;
+                    continue;
+                }
+                if (has_e and (e_index == j - 1) and (expr[j] == '+' or expr[j] == '-')) {
+                    has_sign = true;
                     continue;
                 }
                 if (!std.ascii.isDigit(expr[j])) break;
@@ -263,11 +304,25 @@ pub fn shunting_yard(allocator: std.mem.Allocator, tokens: []const Token) ![]Nod
         const token = tokens[i];
         switch (token.type) {
             .number => {
-                const value = try std.fmt.parseFloat(f64, token.value);
-                try output_queue.append(Node{
-                    .type = .literal,
-                    .value = .{ .literal = value },
-                });
+                // Check if the number is an integer or float
+                const is_float = std.mem.indexOf(u8, token.value, ".") != null or
+                    std.mem.indexOf(u8, token.value, "e") != null or
+                    std.mem.indexOf(u8, token.value, "E") != null or
+                    token.value[0] == '.';
+
+                if (is_float) {
+                    const value = try std.fmt.parseFloat(f64, token.value);
+                    try output_queue.append(Node{
+                        .type = .literal_float,
+                        .value = .{ .float = value },
+                    });
+                } else {
+                    const value = try std.fmt.parseInt(i64, token.value, 10);
+                    try output_queue.append(Node{
+                        .type = .literal_integer,
+                        .value = .{ .integer = value },
+                    });
+                }
             },
             .string => {
                 const str_value = try allocator.dupe(u8, token.value[1 .. token.value.len - 1]);
@@ -467,7 +522,7 @@ pub fn parse_to_tree(allocator: std.mem.Allocator, expression: []const u8) !Pars
 
     for (rpn) |node| {
         switch (node.type) {
-            .literal, .literal_string, .literal_date, .identifier => {
+            .literal_integer, .literal_float, .literal_string, .literal_date, .identifier => {
                 var cloned = try cloneNode(allocator, node);
                 errdefer cloned.deinit(allocator);
                 try stack.append(cloned);
@@ -577,7 +632,8 @@ fn cloneNode(allocator: std.mem.Allocator, node: Node) !Node {
     };
 
     switch (node.type) {
-        .literal => new_node.value = .{ .literal = node.value.literal },
+        .literal_integer => new_node.value = .{ .integer = node.value.integer },
+        .literal_float => new_node.value = .{ .float = node.value.float },
         .literal_string => new_node.value = .{ .string = try allocator.dupe(u8, node.value.string) },
         .literal_date => new_node.value = .{ .date = try allocator.dupe(u8, node.value.date) },
         .identifier => new_node.value = .{ .identifier = try allocator.dupe(u8, node.value.identifier) },
@@ -656,11 +712,11 @@ test "shunting yard simple expression" {
     }
 
     try std.testing.expectEqual(@as(usize, 3), result.len);
-    try std.testing.expectEqual(NodeType.literal, result[0].type);
-    try std.testing.expectEqual(NodeType.literal, result[1].type);
+    try std.testing.expectEqual(NodeType.literal_integer, result[0].type);
+    try std.testing.expectEqual(NodeType.literal_integer, result[1].type);
     try std.testing.expectEqual(NodeType.binary_operator, result[2].type);
-    try std.testing.expectEqual(@as(f64, 3), result[0].value.literal);
-    try std.testing.expectEqual(@as(f64, 4), result[1].value.literal);
+    try std.testing.expectEqual(@as(i64, 3), result[0].value.integer);
+    try std.testing.expectEqual(@as(i64, 4), result[1].value.integer);
     try std.testing.expectEqualStrings("+", result[2].value.operator);
 }
 
@@ -674,10 +730,10 @@ test "parse simple arithmetic expression" {
     try std.testing.expectEqualStrings("+", tree.root.value.operator);
 
     const args = tree.root.args.?;
-    try std.testing.expectEqual(NodeType.literal, args[0].type);
-    try std.testing.expectEqual(@as(f64, 3), args[0].value.literal);
-    try std.testing.expectEqual(NodeType.literal, args[1].type);
-    try std.testing.expectEqual(@as(f64, 4), args[1].value.literal);
+    try std.testing.expectEqual(NodeType.literal_integer, args[0].type);
+    try std.testing.expectEqual(@as(i64, 3), args[0].value.integer);
+    try std.testing.expectEqual(NodeType.literal_integer, args[1].type);
+    try std.testing.expectEqual(@as(i64, 4), args[1].value.integer);
 }
 
 test "parse function call" {
@@ -691,10 +747,10 @@ test "parse function call" {
     try std.testing.expectEqual(@as(usize, 2), tree.root.value.function.arg_count);
 
     const args = tree.root.args.?;
-    try std.testing.expectEqual(NodeType.literal, args[0].type);
-    try std.testing.expectEqual(@as(f64, 1), args[0].value.literal);
-    try std.testing.expectEqual(NodeType.literal, args[1].type);
-    try std.testing.expectEqual(@as(f64, 2), args[1].value.literal);
+    try std.testing.expectEqual(NodeType.literal_integer, args[0].type);
+    try std.testing.expectEqual(@as(i64, 1), args[0].value.integer);
+    try std.testing.expectEqual(NodeType.literal_integer, args[1].type);
+    try std.testing.expectEqual(@as(i64, 2), args[1].value.integer);
 }
 
 test "parse complex expression" {
@@ -711,12 +767,12 @@ test "parse complex expression" {
     try std.testing.expectEqual(NodeType.function, args[1].type);
 
     const add_args = args[0].args.?;
-    try std.testing.expectEqual(@as(f64, 1), add_args[0].value.literal);
-    try std.testing.expectEqual(@as(f64, 2), add_args[1].value.literal);
+    try std.testing.expectEqual(@as(i64, 1), add_args[0].value.integer);
+    try std.testing.expectEqual(@as(i64, 2), add_args[1].value.integer);
 
     const mul_args = args[1].args.?;
-    try std.testing.expectEqual(@as(f64, 3), mul_args[0].value.literal);
-    try std.testing.expectEqual(@as(f64, 4), mul_args[1].value.literal);
+    try std.testing.expectEqual(@as(i64, 3), mul_args[0].value.integer);
+    try std.testing.expectEqual(@as(i64, 4), mul_args[1].value.integer);
 }
 
 test "parse list expression" {
@@ -729,9 +785,9 @@ test "parse list expression" {
     try std.testing.expectEqual(@as(usize, 3), tree.root.value.list.element_count);
 
     const elements = tree.root.args.?;
-    try std.testing.expectEqual(@as(f64, 1), elements[0].value.literal);
-    try std.testing.expectEqual(@as(f64, 2), elements[1].value.literal);
-    try std.testing.expectEqual(@as(f64, 3), elements[2].value.literal);
+    try std.testing.expectEqual(@as(i64, 1), elements[0].value.integer);
+    try std.testing.expectEqual(@as(i64, 2), elements[1].value.integer);
+    try std.testing.expectEqual(@as(i64, 3), elements[2].value.integer);
 }
 
 test "tokenize all node types" {
@@ -748,7 +804,7 @@ test "tokenize all node types" {
     std.debug.print("tokens:\n", .{});
     // var i: u64 = 0;
     // for (result) |token| {
-    //     std.debug.print("{}. \"{s}\" ({s})\n", .{ i+1, token.value, @tagName(token.type) });
+    //     std.debug.print("{}. \"{s}\" ({s})\n", .{ (i + 1), token.value, @tagName(token.type) });
     //     i += 1;
     // }
     // Expected tokens in order:
@@ -758,27 +814,26 @@ test "tokenize all node types" {
     // 4. "(" (left_paren)
     // 5. "3.14" (number)
     // 6. "," (comma)
-    // 7. "-" (operator)
-    // 8. "42" (number)
-    // 9. ")" (right_paren)
-    // 10. "," (comma)
-    // 11. "d'2023-01-01'" (date_string)
-    // 12. "," (comma)
-    // 13. "'string'" (string)
-    // 14. "," (comma)
-    // 15. "[" (left_bracket)
-    // 16. "1" (number)
-    // 17. "," (comma)
-    // 18. "2" (number)
-    // 19. "]" (right_bracket)
-    // 20. ")" (right_paren)
-    // 21. ">" (operator)
-    // 22. "5" (number)
-    // 23. "and" (operator)
-    // 24. "not" (operator)
-    // 25. "true" (identifier)
+    // 7. "-42" (number)
+    // 8. ")" (right_paren)
+    // 9. "," (comma)
+    // 10. "d'2023-01-01'" (date_string)
+    // 11. "," (comma)
+    // 12. "'string'" (string)
+    // 13. "," (comma)
+    // 14. "[" (left_bracket)
+    // 15. "1" (number)
+    // 16. "," (comma)
+    // 17. "2" (number)
+    // 18. "]" (right_bracket)
+    // 19. ")" (right_paren)
+    // 20. ">" (operator)
+    // 21. "5" (number)
+    // 22. "and" (operator)
+    // 23. "not" (operator)
+    // 24. "true" (identifier)
 
-    try std.testing.expectEqual(@as(usize, 25), result.len);
+    try std.testing.expectEqual(@as(usize, 24), result.len);
 
     // Test specific tokens
     try std.testing.expectEqual(TokenType.identifier, result[0].type);
@@ -793,32 +848,29 @@ test "tokenize all node types" {
     try std.testing.expectEqual(TokenType.number, result[4].type);
     try std.testing.expectEqualStrings("3.14", result[4].value);
 
-    try std.testing.expectEqual(TokenType.operator, result[6].type);
-    try std.testing.expectEqualStrings("-", result[6].value);
+    try std.testing.expectEqual(TokenType.number, result[6].type);
+    try std.testing.expectEqualStrings("-42", result[6].value);
 
-    try std.testing.expectEqual(TokenType.number, result[7].type);
-    try std.testing.expectEqualStrings("42", result[7].value);
+    try std.testing.expectEqual(TokenType.date_string, result[9].type);
+    try std.testing.expectEqualStrings("d'2023-01-01'", result[9].value);
 
-    try std.testing.expectEqual(TokenType.date_string, result[10].type);
-    try std.testing.expectEqualStrings("d'2023-01-01'", result[10].value);
+    try std.testing.expectEqual(TokenType.string, result[11].type);
+    try std.testing.expectEqualStrings("'string'", result[11].value);
 
-    try std.testing.expectEqual(TokenType.string, result[12].type);
-    try std.testing.expectEqualStrings("'string'", result[12].value);
+    try std.testing.expectEqual(TokenType.left_bracket, result[13].type);
+    try std.testing.expectEqualStrings("[", result[13].value);
 
-    try std.testing.expectEqual(TokenType.left_bracket, result[14].type);
-    try std.testing.expectEqualStrings("[", result[14].value);
+    try std.testing.expectEqual(TokenType.operator, result[19].type);
+    try std.testing.expectEqualStrings(">", result[19].value);
 
-    try std.testing.expectEqual(TokenType.operator, result[20].type);
-    try std.testing.expectEqualStrings(">", result[20].value);
+    try std.testing.expectEqual(TokenType.operator, result[21].type);
+    try std.testing.expectEqualStrings("and", result[21].value);
 
     try std.testing.expectEqual(TokenType.operator, result[22].type);
-    try std.testing.expectEqualStrings("and", result[22].value);
+    try std.testing.expectEqualStrings("not", result[22].value);
 
-    try std.testing.expectEqual(TokenType.operator, result[23].type);
-    try std.testing.expectEqualStrings("not", result[23].value);
-
-    try std.testing.expectEqual(TokenType.identifier, result[24].type);
-    try std.testing.expectEqualStrings("true", result[24].value);
+    try std.testing.expectEqual(TokenType.identifier, result[23].type);
+    try std.testing.expectEqualStrings("true", result[23].value);
 }
 
 test "tokenize list expressions" {
@@ -1005,11 +1057,11 @@ test "shunting yard function call" {
     try std.testing.expectEqual(@as(usize, 3), result.len);
 
     // First two nodes should be literals
-    try std.testing.expectEqual(NodeType.literal, result[0].type);
-    try std.testing.expectEqual(@as(f64, 1), result[0].value.literal);
+    try std.testing.expectEqual(NodeType.literal_integer, result[0].type);
+    try std.testing.expectEqual(@as(i64, 1), result[0].value.integer);
 
-    try std.testing.expectEqual(NodeType.literal, result[1].type);
-    try std.testing.expectEqual(@as(f64, 2), result[1].value.literal);
+    try std.testing.expectEqual(NodeType.literal_integer, result[1].type);
+    try std.testing.expectEqual(@as(i64, 2), result[1].value.integer);
 
     // Last node should be the function
     try std.testing.expectEqual(NodeType.function, result[2].type);
@@ -1040,14 +1092,14 @@ test "shunting yard nested function calls" {
     try std.testing.expectEqual(@as(usize, 5), result.len);
 
     // Check literals
-    try std.testing.expectEqual(NodeType.literal, result[0].type);
-    try std.testing.expectEqual(@as(f64, 1), result[0].value.literal);
+    try std.testing.expectEqual(NodeType.literal_integer, result[0].type);
+    try std.testing.expectEqual(@as(i64, 1), result[0].value.integer);
 
-    try std.testing.expectEqual(NodeType.literal, result[1].type);
-    try std.testing.expectEqual(@as(f64, 2), result[1].value.literal);
+    try std.testing.expectEqual(NodeType.literal_integer, result[1].type);
+    try std.testing.expectEqual(@as(i64, 2), result[1].value.integer);
 
-    try std.testing.expectEqual(NodeType.literal, result[2].type);
-    try std.testing.expectEqual(@as(f64, 3), result[2].value.literal);
+    try std.testing.expectEqual(NodeType.literal_integer, result[2].type);
+    try std.testing.expectEqual(@as(i64, 3), result[2].value.integer);
 
     // Check inner function (mul)
     try std.testing.expectEqual(NodeType.function, result[3].type);
@@ -1058,4 +1110,133 @@ test "shunting yard nested function calls" {
     try std.testing.expectEqual(NodeType.function, result[4].type);
     try std.testing.expectEqualStrings("add", result[4].value.function.name);
     try std.testing.expectEqual(@as(usize, 2), result[4].value.function.arg_count);
+}
+
+test "parse numeric literals" {
+    const allocator = std.testing.allocator;
+
+    // Test integers
+    var tree = try parse_to_tree(allocator, "42");
+    defer tree.deinit(allocator);
+    try std.testing.expectEqual(NodeType.literal_integer, tree.root.type);
+    try std.testing.expectEqual(@as(i64, 42), tree.root.value.integer);
+
+    // Test negative integers
+    tree = try parse_to_tree(allocator, "-42");
+    defer tree.deinit(allocator);
+    try std.testing.expectEqual(NodeType.literal_integer, tree.root.type);
+    try std.testing.expectEqual(@as(i64, -42), tree.root.value.integer);
+
+    // Test decimal numbers
+    tree = try parse_to_tree(allocator, "3.14");
+    defer tree.deinit(allocator);
+    try std.testing.expectEqual(NodeType.literal_float, tree.root.type);
+    try std.testing.expectEqual(@as(f64, 3.14), tree.root.value.float);
+
+    // Test leading decimal point
+    tree = try parse_to_tree(allocator, ".5");
+    defer tree.deinit(allocator);
+    try std.testing.expectEqual(NodeType.literal_float, tree.root.type);
+    try std.testing.expectEqual(@as(f64, 0.5), tree.root.value.float);
+
+    // Test negative decimal numbers
+    tree = try parse_to_tree(allocator, "-3.14");
+    defer tree.deinit(allocator);
+    try std.testing.expectEqual(NodeType.literal_float, tree.root.type);
+    try std.testing.expectEqual(@as(f64, -3.14), tree.root.value.float);
+
+    // Test scientific notation
+    tree = try parse_to_tree(allocator, "1e5");
+    defer tree.deinit(allocator);
+    try std.testing.expectEqual(NodeType.literal_float, tree.root.type);
+    try std.testing.expectEqual(@as(f64, 100000.0), tree.root.value.float);
+
+    // Test scientific notation with decimal
+    tree = try parse_to_tree(allocator, "1.23e4");
+    defer tree.deinit(allocator);
+    try std.testing.expectEqual(NodeType.literal_float, tree.root.type);
+    try std.testing.expectEqual(@as(f64, 12300.0), tree.root.value.float);
+
+    // Test negative exponents
+    tree = try parse_to_tree(allocator, "1e-5");
+    defer tree.deinit(allocator);
+    try std.testing.expectEqual(NodeType.literal_float, tree.root.type);
+    try std.testing.expectEqual(@as(f64, 0.00001), tree.root.value.float);
+
+    // Test explicit positive exponents
+    tree = try parse_to_tree(allocator, "1.23e+4");
+    defer tree.deinit(allocator);
+    try std.testing.expectEqual(NodeType.literal_float, tree.root.type);
+    try std.testing.expectEqual(@as(f64, 12300.0), tree.root.value.float);
+}
+
+test "tokenize number formats" {
+    const allocator = std.testing.allocator;
+
+    // Test cases with expected type and value
+    const TestCase = struct {
+        input: []const u8,
+        expected_value: []const u8,
+    };
+
+    const test_cases = [_]TestCase{
+        // Integers
+        .{ .input = "42", .expected_value = "42" },
+        .{ .input = "-42", .expected_value = "-42" },
+        // Decimal numbers
+        .{ .input = "3.14", .expected_value = "3.14" },
+        .{ .input = "-3.14", .expected_value = "-3.14" },
+        // Leading decimal point
+        .{ .input = ".5", .expected_value = ".5" },
+        .{ .input = "-.5", .expected_value = "-.5" },
+        // Scientific notation
+        .{ .input = "1e5", .expected_value = "1e5" },
+        .{ .input = "1.23e4", .expected_value = "1.23e4" },
+        .{ .input = "1e-5", .expected_value = "1e-5" },
+        .{ .input = "-1.23e-4", .expected_value = "-1.23e-4" },
+        .{ .input = "1.23e+4", .expected_value = "1.23e+4" },
+        .{ .input = "-.23e+4", .expected_value = "-.23e+4" },
+    };
+
+    for (test_cases) |tc| {
+        const result = try tokenize(allocator, tc.input);
+        defer {
+            for (result) |token| {
+                allocator.free(token.value);
+            }
+            allocator.free(result);
+        }
+
+        try std.testing.expectEqual(@as(usize, 1), result.len);
+        try std.testing.expectEqual(TokenType.number, result[0].type);
+        try std.testing.expectEqualStrings(tc.expected_value, result[0].value);
+
+        std.debug.print("Tokenized '{s}' -> '{s}'\n", .{ tc.input, result[0].value });
+    }
+}
+
+test "tokenize number in expressions" {
+    const allocator = std.testing.allocator;
+
+    const test_cases = [_][]const u8{
+        "1 + .5",
+        "-1.23e-4 * 3",
+        "func(.5, -2)",
+        "1e5 + .123e-2",
+    };
+
+    for (test_cases) |expr| {
+        const result = try tokenize(allocator, expr);
+        defer {
+            for (result) |token| {
+                allocator.free(token.value);
+            }
+            allocator.free(result);
+        }
+
+        std.debug.print("\nTokenizing '{s}':\n", .{expr});
+        for (result) |token| {
+            std.debug.print("  {s}: '{s}'\n", .{ @tagName(token.type), token.value });
+        }
+    }
 }
