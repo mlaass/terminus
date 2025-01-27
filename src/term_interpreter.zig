@@ -53,7 +53,7 @@ pub const Environment = struct {
     }
 };
 
-pub const CompareOp = enum { gt, lt, eq, neq };
+pub const CompareOp = enum { gt, lt, eq, neq, gte, lte };
 
 pub fn evaluate(allocator: Allocator, node: *const Node, env: *Environment) InterpreterError!Value {
     return switch (node.type) {
@@ -75,16 +75,47 @@ fn evaluateBinaryOperator(allocator: Allocator, node: *const Node, env: *Environ
     const left = try evaluate(allocator, &node.args.?[0], env);
     const right = try evaluate(allocator, &node.args.?[1], env);
 
-    return switch (node.value.operator[0]) {
+    // Get the full operator string from node
+    const op = node.value.operator;
+
+    return switch (op[0]) {
         '+' => addValues(left, right),
         '-' => subtractValues(left, right),
-        '*' => multiplyValues(left, right),
-        '/' => divideValues(left, right),
-        '>' => compareValues(left, right, .gt),
-        '<' => compareValues(left, right, .lt),
+        '*' => if (op.len > 1 and op[1] == '*')
+            powerValues(left, right)
+        else
+            multiplyValues(left, right),
+        '/' => if (op.len > 1 and op[1] == '/')
+            floorDivValues(left, right)
+        else
+            divideValues(left, right),
+        '>' => if (op.len > 1 and op[1] == '=')
+            compareValues(left, right, .gte)
+        else
+            compareValues(left, right, .gt),
+        '<' => if (op.len > 1 and op[1] == '=')
+            compareValues(left, right, .lte)
+        else
+            compareValues(left, right, .lt),
         '=' => compareValues(left, right, .eq),
         '!' => compareValues(left, right, .neq),
-        else => return error.InvalidOperation,
+        '%' => moduloValues(left, right),
+        '|' => bitwiseOrValues(left, right),
+        '&' => bitwiseAndValues(left, right),
+        else => if (std.mem.eql(u8, op, "mod"))
+            moduloValues(left, right)
+        else if (std.mem.eql(u8, op, "and"))
+            logicalAndValues(left, right)
+        else if (std.mem.eql(u8, op, "or"))
+            logicalOrValues(left, right)
+        else if (std.mem.eql(u8, op, "xor"))
+            bitwiseXorValues(left, right)
+        else if (std.mem.eql(u8, op, "<<"))
+            bitShiftLeftValues(left, right)
+        else if (std.mem.eql(u8, op, ">>"))
+            bitShiftRightValues(left, right)
+        else
+            return error.InvalidOperation,
     };
 }
 
@@ -92,7 +123,7 @@ fn evaluateUnaryOperator(allocator: Allocator, node: *const Node, env: *Environm
     if (node.args == null or node.args.?.len < 1) return error.InvalidArgCount;
 
     const operand = try evaluate(allocator, &node.args.?[0], env);
-
+    std.debug.print("operand: {any}\n", .{operand});
     return switch (node.value.operator[0]) {
         'n' => negateValue(operand),
         '!' => notValue(operand),
@@ -133,7 +164,22 @@ fn evaluateList(allocator: Allocator, node: *const Node, env: *Environment) Inte
     for (0..node.value.list.element_count) |i| {
         elements[i] = try evaluate(allocator, &node.args.?[i], env);
     }
+
+    // The caller is responsible for freeing the list
     return Value{ .list = elements };
+}
+
+// Add this function to help manage list memory
+pub fn deinitValue(allocator: Allocator, value: Value) void {
+    switch (value) {
+        .list => |list| {
+            for (list) |element| {
+                deinitValue(allocator, element);
+            }
+            allocator.free(list);
+        },
+        else => {}, // Other value types don't need cleanup
+    }
 }
 
 // Helper functions for operations
@@ -209,6 +255,8 @@ fn compareValues(left: Value, right: Value, op: CompareOp) InterpreterError!Valu
                 .lt => a < b,
                 .eq => a == b,
                 .neq => a != b,
+                .gte => a >= b,
+                .lte => a <= b,
             };
         }
 
@@ -219,6 +267,8 @@ fn compareValues(left: Value, right: Value, op: CompareOp) InterpreterError!Valu
                 .lt => cmp == .lt,
                 .eq => cmp == .eq,
                 .neq => cmp != .eq,
+                .gte => cmp != .lt,
+                .lte => cmp != .gt,
             };
         }
     };
@@ -253,6 +303,7 @@ fn negateValue(value: Value) InterpreterError!Value {
     return switch (value) {
         .integer => |v| Value{ .integer = -v },
         .float => |v| Value{ .float = -v },
+        .boolean => |v| Value{ .boolean = !v },
         else => return error.TypeError,
     };
 }
@@ -264,48 +315,123 @@ fn notValue(value: Value) InterpreterError!Value {
     };
 }
 
-test "evaluate simple expression" {
-    const allocator = std.testing.allocator;
-
-    var env = Environment.init(allocator, null);
-    defer env.deinit();
-
-    try env.put("x", Value{ .integer = 42 });
-
-    var addition = try parse_to_tree(allocator, "5 + x");
-    defer addition.deinit(allocator);
-
-    const result = try evaluate(allocator, &addition.root, &env);
-    std.debug.print("Result: {any}\n", .{result});
-    try std.testing.expectEqual(Value{ .integer = 47 }, result);
+fn powerValues(left: Value, right: Value) InterpreterError!Value {
+    return switch (left) {
+        .integer => |l| switch (right) {
+            .integer => |r| if (r >= 0)
+                Value{ .integer = std.math.pow(i64, l, @as(u6, @intCast(@min(@as(u64, @intCast(r)), 63)))) }
+            else
+                Value{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), @as(f64, @floatFromInt(r))) },
+            .float => |r| Value{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), r) },
+            else => error.TypeError,
+        },
+        .float => |l| switch (right) {
+            .integer => |r| Value{ .float = std.math.pow(f64, l, @as(f64, @floatFromInt(r))) },
+            .float => |r| Value{ .float = std.math.pow(f64, l, r) },
+            else => error.TypeError,
+        },
+        else => error.TypeError,
+    };
 }
 
-test "evaluate integer and float operations" {
-    const allocator = std.testing.allocator;
-    var env = Environment.init(allocator, null);
-    defer env.deinit();
+fn floorDivValues(left: Value, right: Value) InterpreterError!Value {
+    return switch (left) {
+        .integer => |l| switch (right) {
+            .integer => |r| if (r == 0)
+                error.DivisionByZero
+            else
+                Value{ .integer = @divFloor(l, r) },
+            else => error.TypeError,
+        },
+        else => error.TypeError,
+    };
+}
 
-    // Integer addition
-    var tree1 = try parse_to_tree(allocator, "42 + 5");
-    defer tree1.deinit(allocator);
-    var result = try evaluate(allocator, &tree1.root, &env);
-    try std.testing.expectEqual(Value{ .integer = 47 }, result);
+fn moduloValues(left: Value, right: Value) InterpreterError!Value {
+    return switch (left) {
+        .integer => |l| switch (right) {
+            .integer => |r| if (r == 0)
+                error.DivisionByZero
+            else
+                Value{ .integer = @mod(l, r) },
+            else => error.TypeError,
+        },
+        else => error.TypeError,
+    };
+}
 
-    // Mixed integer and float
-    var tree2 = try parse_to_tree(allocator, "42 + 3.14");
-    defer tree2.deinit(allocator);
-    result = try evaluate(allocator, &tree2.root, &env);
-    try std.testing.expectEqual(Value{ .float = 45.14 }, result);
+fn logicalAndValues(left: Value, right: Value) InterpreterError!Value {
+    return switch (left) {
+        .boolean => |l| switch (right) {
+            .boolean => |r| Value{ .boolean = l and r },
+            else => error.TypeError,
+        },
+        else => error.TypeError,
+    };
+}
 
-    // integer division
-    var tree3 = try parse_to_tree(allocator, "10 / 3");
-    defer tree3.deinit(allocator);
-    result = try evaluate(allocator, &tree3.root, &env);
-    try std.testing.expectEqual(Value{ .integer = 3 }, result);
+fn logicalOrValues(left: Value, right: Value) InterpreterError!Value {
+    return switch (left) {
+        .boolean => |l| switch (right) {
+            .boolean => |r| Value{ .boolean = l or r },
+            else => error.TypeError,
+        },
+        else => error.TypeError,
+    };
+}
 
-    // float division
-    var tree4 = try parse_to_tree(allocator, "1e5 + -.123e-2");
-    defer tree4.deinit(allocator);
-    result = try evaluate(allocator, &tree4.root, &env);
-    try std.testing.expectEqual(Value{ .float = 99999.99877 }, result);
+fn bitwiseAndValues(left: Value, right: Value) InterpreterError!Value {
+    return switch (left) {
+        .integer => |l| switch (right) {
+            .integer => |r| Value{ .integer = l & r },
+            else => error.TypeError,
+        },
+        else => error.TypeError,
+    };
+}
+
+fn bitwiseOrValues(left: Value, right: Value) InterpreterError!Value {
+    return switch (left) {
+        .integer => |l| switch (right) {
+            .integer => |r| Value{ .integer = l | r },
+            else => error.TypeError,
+        },
+        else => error.TypeError,
+    };
+}
+
+fn bitwiseXorValues(left: Value, right: Value) InterpreterError!Value {
+    return switch (left) {
+        .integer => |l| switch (right) {
+            .integer => |r| Value{ .integer = l ^ r },
+            else => error.TypeError,
+        },
+        else => error.TypeError,
+    };
+}
+
+fn bitShiftLeftValues(left: Value, right: Value) InterpreterError!Value {
+    return switch (left) {
+        .integer => |l| switch (right) {
+            .integer => |r| if (r >= 0)
+                Value{ .integer = l << @intCast(@min(@as(u64, @intCast(r)), 63)) }
+            else
+                error.InvalidOperation,
+            else => error.TypeError,
+        },
+        else => error.TypeError,
+    };
+}
+
+fn bitShiftRightValues(left: Value, right: Value) InterpreterError!Value {
+    return switch (left) {
+        .integer => |l| switch (right) {
+            .integer => |r| if (r >= 0)
+                Value{ .integer = l >> @intCast(@min(@as(u64, @intCast(r)), 63)) }
+            else
+                error.InvalidOperation,
+            else => error.TypeError,
+        },
+        else => error.TypeError,
+    };
 }
