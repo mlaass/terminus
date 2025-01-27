@@ -58,13 +58,7 @@ pub const binary_operators = std.ComptimeStringMap(u8, .{
 pub const unary_operators = std.ComptimeStringMap(void, .{
     .{ "not", {} },
     .{ "!", {} },
-    .{ "neg", {} },
-    .{ "floor", {} },
-    .{ "ceil", {} },
-    .{ "abs", {} },
-    .{ "int", {} },
-    .{ "float", {} },
-    .{ "bool", {} },
+    .{ "-", {} },
 });
 
 pub const NodeType = enum {

@@ -1,9 +1,10 @@
 const std = @import("std");
 const Value = @import("term_interpreter.zig").Value;
+const InterpreterError = @import("term_interpreter.zig").InterpreterError;
 const Allocator = std.mem.Allocator;
 
 // Helper function to convert Value to f64
-fn valueToFloat(value: Value) !f64 {
+fn valueToFloat(value: Value) InterpreterError!f64 {
     return switch (value) {
         .integer => |i| @as(f64, @floatFromInt(i)),
         .float => |f| f,
@@ -12,51 +13,137 @@ fn valueToFloat(value: Value) !f64 {
 }
 
 // Math functions
-fn min(args: []const Value) !Value {
+pub fn min(args: []const Value) InterpreterError!Value {
     if (args.len < 1) return error.InvalidArgCount;
+
+    // Keep track of both the float value for comparison and the original value
     var min_val = try valueToFloat(args[0]);
+    var min_orig = args[0];
+
     for (args[1..]) |arg| {
         const val = try valueToFloat(arg);
-        min_val = @min(min_val, val);
+        if (val < min_val) {
+            min_val = val;
+            min_orig = arg;
+        }
     }
-    return Value{ .float = min_val };
+
+    return min_orig;
 }
 
-fn max(args: []const Value) !Value {
+pub fn max(args: []const Value) InterpreterError!Value {
     if (args.len < 1) return error.InvalidArgCount;
+
+    // Keep track of both the float value for comparison and the original value
     var max_val = try valueToFloat(args[0]);
+    var max_orig = args[0];
+
     for (args[1..]) |arg| {
         const val = try valueToFloat(arg);
-        max_val = @max(max_val, val);
+        if (val > max_val) {
+            max_val = val;
+            max_orig = arg;
+        }
     }
-    return Value{ .float = max_val };
+
+    return max_orig;
 }
 
-fn sqrt(args: []const Value) !Value {
+pub fn log(args: []const Value) InterpreterError!Value {
+    if (args.len != 1) return error.InvalidArgCount;
+    const x = try valueToFloat(args[0]);
+    return Value{ .float = @log(x) };
+}
+
+pub fn log2(args: []const Value) InterpreterError!Value {
+    if (args.len != 1) return error.InvalidArgCount;
+    const x = try valueToFloat(args[0]);
+    return Value{ .float = @log2(x) };
+}
+
+pub fn log10(args: []const Value) InterpreterError!Value {
+    if (args.len != 1) return error.InvalidArgCount;
+    const x = try valueToFloat(args[0]);
+    return Value{ .float = @log10(x) };
+}
+
+pub fn exp(args: []const Value) InterpreterError!Value {
+    if (args.len != 1) return error.InvalidArgCount;
+    const x = try valueToFloat(args[0]);
+    return Value{ .float = @exp(x) };
+}
+
+pub fn sqrt(args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
     return Value{ .float = @sqrt(x) };
 }
 
+pub fn mean(args: []const Value) InterpreterError!Value {
+    if (args.len == 0) return error.InvalidArgCount;
+
+    var sum: f64 = 0;
+    for (args) |arg| {
+        sum += try valueToFloat(arg);
+    }
+    return Value{ .float = sum / @as(f64, @floatFromInt(args.len)) };
+}
+
+pub fn abs(args: []const Value) InterpreterError!Value {
+    if (args.len != 1) return error.InvalidArgCount;
+    const x = try valueToFloat(args[0]);
+    return switch (args[0]) {
+        .integer => Value{ .integer = @intFromFloat(@fabs(x)) },
+        .float => Value{ .float = @fabs(x) },
+        else => error.TypeError,
+    };
+}
+
+pub fn ceil(args: []const Value) InterpreterError!Value {
+    if (args.len != 1) return error.InvalidArgCount;
+    const x = try valueToFloat(args[0]);
+    return Value{ .float = @ceil(x) };
+}
+
+pub fn floor(args: []const Value) InterpreterError!Value {
+    if (args.len != 1) return error.InvalidArgCount;
+    const x = try valueToFloat(args[0]);
+    return Value{ .float = @floor(x) };
+}
+
 // String functions
-fn strConcat(args: []const Value) !Value {
+fn strConcat(args: []const Value) InterpreterError!Value {
+    if (args.len < 1) return error.InvalidArgCount;
+
     var buf = std.ArrayList(u8).init(allocator);
-    defer buf.deinit();
+    errdefer buf.deinit();
 
     for (args) |arg| {
         switch (arg) {
             .string => |s| try buf.appendSlice(s),
-            .integer => |i| try std.fmt.format(buf.writer(), "{d}", .{i}),
-            .float => |f| try std.fmt.format(buf.writer(), "{d}", .{f}),
-            .boolean => |b| try std.fmt.format(buf.writer(), "{}", .{b}),
+            .integer => |i| {
+                var temp_buf: [20]u8 = undefined;
+                const str = std.fmt.bufPrint(&temp_buf, "{d}", .{i}) catch return error.OutOfMemory;
+                try buf.appendSlice(str);
+            },
+            .float => |f| {
+                var temp_buf: [32]u8 = undefined;
+                const str = std.fmt.bufPrint(&temp_buf, "{d}", .{f}) catch return error.OutOfMemory;
+                try buf.appendSlice(str);
+            },
+            .boolean => |b| {
+                const str = if (b) "true" else "false";
+                try buf.appendSlice(str);
+            },
             else => return error.TypeError,
         }
     }
 
-    return Value{ .string = try buf.toOwnedSlice() };
+    const result = buf.toOwnedSlice() catch return error.OutOfMemory;
+    return Value{ .string = result };
 }
 
-fn strLength(args: []const Value) !Value {
+fn strLength(args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const str = switch (args[0]) {
         .string => |s| s,
@@ -66,25 +153,21 @@ fn strLength(args: []const Value) !Value {
 }
 
 // Date functions
-fn dateAddDays(args: []const Value) !Value {
+fn dateAddDays(args: []const Value) InterpreterError!Value {
     if (args.len != 2) return error.InvalidArgCount;
     const date_str = switch (args[0]) {
         .date => |d| d,
         else => return error.TypeError,
     };
-    // const days = switch (args[1]) {
-    //     .integer => |i| i,
-    //     else => return error.TypeError,
-    // };
 
     // Parse date, add days, format result
     var buf: [64]u8 = undefined;
-    // TODO: Implement actual date arithmetic
-    return Value{ .date = try std.fmt.bufPrint(&buf, "{s}", .{date_str}) };
+    const result = std.fmt.bufPrint(&buf, "{s}", .{date_str}) catch return error.OutOfMemory;
+    return Value{ .date = result };
 }
 
 // List functions
-fn listLength(args: []const Value) !Value {
+fn listLength(args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const list = switch (args[0]) {
         .list => |l| l,
@@ -93,14 +176,14 @@ fn listLength(args: []const Value) !Value {
     return Value{ .integer = @intCast(list.len) };
 }
 
-fn listAppend(args: []const Value) !Value {
+fn listAppend(args: []const Value) InterpreterError!Value {
     if (args.len != 2) return error.InvalidArgCount;
     const list = switch (args[0]) {
         .list => |l| l,
         else => return error.TypeError,
     };
 
-    var new_list = try allocator.alloc(Value, list.len + 1);
+    var new_list = allocator.alloc(Value, list.len + 1) catch return error.OutOfMemory;
     @memcpy(new_list[0..list.len], list);
     new_list[list.len] = args[1];
 
@@ -114,27 +197,95 @@ pub fn init(alloc: Allocator) void {
     allocator = alloc;
 }
 
-// Function lookup table
-const BuiltinFn = *const fn ([]const Value) anyerror!Value;
-
-pub const builtins = std.ComptimeStringMap(BuiltinFn, .{
-    // Math functions
-    .{ "min", min },
-    .{ "max", max },
-    .{ "sqrt", sqrt },
-
-    // String functions
-    .{ "str.concat", strConcat },
-    .{ "str.length", strLength },
-
-    // Date functions
-    .{ "date.addDays", dateAddDays },
-
-    // List functions
-    .{ "list.length", listLength },
-    .{ "list.append", listAppend },
+// Constants
+pub const constants = std.ComptimeStringMap(Value, .{
+    .{ "pi", Value{ .float = std.math.pi } },
+    .{ "e", Value{ .float = std.math.e } },
+    .{ "inf", Value{ .float = std.math.inf(f64) } },
+    .{ "tau", Value{ .float = std.math.tau } },
+    .{ "nan", Value{ .float = std.math.nan(f64) } },
 });
 
-pub fn get(name: []const u8) ?BuiltinFn {
-    return builtins.get(name);
+// Function map
+pub const functions = std.ComptimeStringMap(*const fn ([]const Value) InterpreterError!Value, .{
+    //types
+    .{ "int", builtin_int },
+    .{ "float", builtin_float },
+    .{ "bool", builtin_bool },
+    // .{ "string", builtin_string },
+    // .{ "date", builtin_date },
+    // .{ "list", builtin_list },
+    // math stuff
+    .{ "min", min },
+    .{ "max", max },
+    .{ "abs", abs },
+    .{ "floor", floor },
+    .{ "ceil", ceil },
+    .{ "log", log },
+    .{ "log2", log2 },
+    // .{ "log1p", log1p },
+    .{ "log10", log10 },
+    .{ "exp", exp },
+    .{ "sqrt", sqrt },
+    // .{ "fsum", fsum },
+    // .{ "gcd", gcd },
+    // .{ "isqrt", isqrt },
+    // .{ "cos", cos },
+    // .{ "sin", sin },
+    // .{ "tan", tan },
+    // .{ "acos", acos },
+    // .{ "asin", asin },
+    // .{ "atan", atan },
+    // .{ "degrees", degrees },
+    // .{ "radians", radians },
+    .{ "mean", mean },
+    // .{ "fmean", fmean },
+    // .{ "geometric_mean", geometric_mean },
+    // .{ "median", median },
+    // .{ "stdev", stdev },
+
+    // string stuff
+    // .{ "variance", variance },
+    .{ "str.concat", strConcat },
+    .{ "str.length", strLength },
+    //     "str.substring": builtin_substring,
+    //     "str.replace": builtin_replace,
+    //     "str.toUpper": builtin_to_upper,
+    //     "str.toLower": builtin_to_lower,
+    //     "str.trim": builtin_trim,
+    //     "str.split": builtin_split,
+    //     "str.indexOf": builtin_index_of,
+    //     "str.contains": builtin_contains,
+    //     "str.startsWith": builtin_starts_with,
+    //     "str.endsWith": builtin_ends_with,
+    //     "str.regexMatch": builtin_regex_match,
+    //     "str.format": builtin_format,
+    // date stuff
+    .{ "date.addDays", dateAddDays },
+    //     "date.parse": parse_iso_date,
+    //     "date.format": format_date,
+    //     "date.addDays": add_days,
+    //     "date.addHours": add_hours,
+    //     "date.addMinutes": add_minutes,
+    //     "date.addSeconds": add_seconds,
+    //     "date.dayOfWeek": day_of_week,
+    //     "date.dayOfMonth": day_of_month,
+    //     "date.dayOfYear": day_of_year,
+    //     "date.month": month_of_year,
+    //     "date.year": year_of_date,
+    //     "date.week": week_of_year,
+    // list stuff
+    .{ "list.length", listLength },
+    .{ "list.append", listAppend },
+    //     "list.concat": concat_lists,
+    //     "list.get": list_get,
+    //     "list.put": list_put,
+    //     "list.slice": slice_list,
+    //     "list.map": list_map,
+    //     "list.filter": list_filter,
+    // .{ "apply", apply_function },
+});
+
+pub fn get(name: []const u8) ?*const fn ([]const Value) InterpreterError!Value {
+    return functions.get(name);
 }
