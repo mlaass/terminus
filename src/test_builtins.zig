@@ -165,19 +165,19 @@ test "builtin function error cases" {
     defer env.deinit();
 
     // Test wrong number of arguments
-    var tree = try parse_to_tree(allocator, "max(1)");
+    var tree = try parse_to_tree(allocator, "max()");
     defer tree.deinit(allocator);
     try std.testing.expectError(error.InvalidArgCount, evaluate(allocator, &tree.root, &env));
 
     // Test type errors
-    tree = try parse_to_tree(allocator, "max(1, 'not a number')");
-    defer tree.deinit(allocator);
-    try std.testing.expectError(error.TypeError, evaluate(allocator, &tree.root, &env));
+    var tree3 = try parse_to_tree(allocator, "max(1, 'not a number')");
+    defer tree3.deinit(allocator);
+    try std.testing.expectError(error.TypeError, evaluate(allocator, &tree3.root, &env));
 
     // Test division by zero
-    tree = try parse_to_tree(allocator, "1 / 0)");
-    defer tree.deinit(allocator);
-    try std.testing.expectError(error.DivisionByZero, evaluate(allocator, &tree.root, &env));
+    var tree4 = try parse_to_tree(allocator, "1 / 0");
+    defer tree4.deinit(allocator);
+    try std.testing.expectError(error.DivisionByZero, evaluate(allocator, &tree4.root, &env));
 }
 
 test "builtin list functions" {
@@ -186,27 +186,23 @@ test "builtin list functions" {
     defer env.deinit();
 
     // Test list creation and access
-    // var tree = try parse_to_tree(allocator, "list.get([1, 2, 3], 1)");
-    // defer tree.deinit(allocator);
-    // var result = try evaluate(allocator, &tree.root, &env);
-    // try std.testing.expectEqual(Value{ .integer = 2 }, result);
+    var tree_get1 = try parse_to_tree(allocator, "list.get(1,[1, 2, 3])");
+    defer tree_get1.deinit(allocator);
+    var result = try evaluate(allocator, &tree_get1.root, &env);
+    std.debug.print("result: {any}\n", .{result});
+    try std.testing.expectEqual(Value{ .integer = 2 }, result);
 
     // Test list length
     var tree_length = try parse_to_tree(allocator, "list.length([1, 2, 3])");
     defer tree_length.deinit(allocator);
-    var result = try evaluate(allocator, &tree_length.root, &env);
+    result = try evaluate(allocator, &tree_length.root, &env);
     try std.testing.expectEqual(Value{ .integer = 3 }, result);
 
     // Test nested lists
-    var tree_get = try parse_to_tree(allocator, "list.get([1, [2, 3], 4], 1)");
-    defer tree_get.deinit(allocator);
-    result = try evaluate(allocator, &tree_get.root, &env);
-
-    // Create expected list value
-    var expected_list = try allocator.alloc(Value, 2);
-    defer allocator.free(expected_list);
-    expected_list[0] = Value{ .integer = 2 };
-    expected_list[1] = Value{ .integer = 3 };
+    var tree_get2 = try parse_to_tree(allocator, "list.get(1,[1, [2, 3], 4])");
+    defer tree_get2.deinit(allocator);
+    result = try evaluate(allocator, &tree_get2.root, &env);
+    std.debug.print("result: {any}\n", .{result});
 
     // Compare the values
     try std.testing.expectEqual(@as(usize, 2), result.list.len);

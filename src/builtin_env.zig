@@ -203,11 +203,11 @@ fn listLength(args: []const Value) InterpreterError!Value {
 
 fn listGet(args: []const Value) InterpreterError!Value {
     if (args.len != 2) return error.InvalidArgCount;
-    const list = switch (args[0]) {
+    const list = switch (args[1]) {
         .list => |l| l,
         else => return error.TypeError,
     };
-    return list[@intCast(args[1].integer)];
+    return list[@intCast(args[0].integer)];
 }
 
 fn listAppend(args: []const Value) InterpreterError!Value {

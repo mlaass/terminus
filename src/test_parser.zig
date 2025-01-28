@@ -92,6 +92,43 @@ test "parse simple arithmetic expression" {
     try std.testing.expectEqual(@as(i64, 4), args[1].value.integer);
 }
 
+test "parse function call without arguments" {
+    const allocator = std.testing.allocator;
+    const term = "time.now()";
+
+    var tokens = try tokenize(allocator, term);
+    defer {
+        for (tokens) |token| {
+            allocator.free(token.value);
+        }
+        allocator.free(tokens);
+    }
+    // for (tokens) |token| {
+    //     std.debug.print("{s} ({s})\n", .{ token.value, @tagName(token.type) });
+    // }
+
+    var rpn = try shunting_yard(allocator, tokens);
+    defer {
+        for (rpn) |*node| {
+            node.deinit(allocator);
+        }
+        allocator.free(rpn);
+    }
+    // for (rpn) |*node| {
+    //     std.debug.print("{s} ({s})\n", .{ node.value.function.name, @tagName(node.type) });
+    // }
+
+    try std.testing.expectEqual(@as(usize, 0), rpn[0].value.function.arg_count);
+    try std.testing.expectEqualStrings("time.now", rpn[0].value.function.name);
+
+    var tree = try parse_to_tree(allocator, term);
+    defer tree.deinit(allocator);
+
+    try std.testing.expectEqual(NodeType.function, tree.root.type);
+    try std.testing.expectEqualStrings("time.now", tree.root.value.function.name);
+    try std.testing.expectEqual(@as(usize, 0), tree.root.value.function.arg_count);
+}
+
 test "parse function call" {
     const allocator = std.testing.allocator;
 

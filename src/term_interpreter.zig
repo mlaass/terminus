@@ -125,8 +125,9 @@ fn evaluateUnaryOperator(allocator: Allocator, node: *const Node, env: *Environm
     const operand = try evaluate(allocator, &node.args.?[0], env);
     std.debug.print("operand: {any}\n", .{operand});
     return switch (node.value.operator[0]) {
-        'n' => negateValue(operand),
+        '-' => negateValue(operand),
         '!' => notValue(operand),
+        'n' => notValue(operand),
         else => return error.InvalidOperation,
     };
 }
@@ -310,6 +311,8 @@ fn negateValue(value: Value) InterpreterError!Value {
 
 fn notValue(value: Value) InterpreterError!Value {
     return switch (value) {
+        .integer => |v| Value{ .boolean = v == 0 },
+        .float => |v| Value{ .boolean = v == 0.0 },
         .boolean => |v| Value{ .boolean = !v },
         else => return error.TypeError,
     };

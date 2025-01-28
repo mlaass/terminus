@@ -308,6 +308,7 @@ pub fn tokenize(allocator: std.mem.Allocator, expression: []const u8) ![]Token {
                 '[' => .left_bracket,
                 ']' => .right_bracket,
                 ',' => .comma,
+                '!' => .unary_operator,
                 '-' => if (i == 0 or (i > 0 and (tokens.items.len == 0 or
                     tokens.items[tokens.items.len - 1].type == .operator or
                     tokens.items[tokens.items.len - 1].type == .left_paren or
@@ -526,13 +527,19 @@ pub fn shunting_yard(allocator: std.mem.Allocator, tokens: []const Token) ![]Nod
                 }
 
                 if (state.operator_stack.items.len == 0) return error.UnmatchedParentheses;
+
+                // Check if there was any content between parentheses
+                const had_content = i > 0 and tokens[i - 1].type != .left_paren;
+
                 _ = state.operator_stack.pop(); // Remove left paren
 
                 // Handle function context if present
                 if (state.currentContext()) |ctx| {
                     if (ctx.context_type == .function) {
-                        // Increment count for the last argument
-                        ctx.count += 1;
+                        // Only increment count if there was content
+                        if (had_content) {
+                            ctx.count += 1;
+                        }
                         try state.popContext();
                     }
                 }
@@ -551,11 +558,17 @@ pub fn shunting_yard(allocator: std.mem.Allocator, tokens: []const Token) ![]Nod
                 }
 
                 if (state.operator_stack.items.len == 0) return error.UnmatchedBrackets;
+
+                // Check if there was any content between brackets
+                const had_content = i > 0 and tokens[i - 1].type != .left_bracket;
+
                 _ = state.operator_stack.pop(); // Remove left bracket
 
-                // Increment count for the last element
+                // Increment count for the last element only if there was content
                 if (state.currentContext()) |ctx| {
-                    ctx.count += 1;
+                    if (had_content) {
+                        ctx.count += 1;
+                    }
                 }
                 try state.popContext();
             },
@@ -684,6 +697,7 @@ pub fn parse_to_tree(allocator: std.mem.Allocator, expression: []const u8) !Pars
             },
             .function => {
                 const arg_count = node.value.function.arg_count;
+                std.debug.print("arg_count: {}\n", .{arg_count});
                 if (stack.items.len < arg_count) return error.InvalidExpression;
 
                 var new_node = try cloneNode(allocator, node);

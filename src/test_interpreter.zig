@@ -198,9 +198,15 @@ test "evaluate boolean operators" {
     try std.testing.expectEqual(Value{ .boolean = true }, result);
 
     // NOT
-    var tree_not = try parse_to_tree(allocator, "!(5 < 3)");
+    var tree_not = try parse_to_tree(allocator, "not(5 < 3)");
     defer tree_not.deinit(allocator);
     result = try evaluate(allocator, &tree_not.root, &env);
+    std.debug.print("result: {any}\n", .{result});
+    try std.testing.expectEqual(Value{ .boolean = true }, result);
+    // NOT
+    var tree_not2 = try parse_to_tree(allocator, "!(5 < 3)");
+    defer tree_not2.deinit(allocator);
+    result = try evaluate(allocator, &tree_not2.root, &env);
     std.debug.print("result: {any}\n", .{result});
     try std.testing.expectEqual(Value{ .boolean = true }, result);
 
