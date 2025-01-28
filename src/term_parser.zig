@@ -409,7 +409,13 @@ pub fn shunting_yard(allocator: std.mem.Allocator, tokens: []const Token) ![]Nod
                     operator_stack.items[operator_stack.items.len - 1].type == .identifier)
                 {
                     const fun = operator_stack.pop();
-                    try handleFunction(&output_queue, fun, arg_count_stack.pop(), allocator);
+                    // Count actual arguments by analyzing the output queue
+                    const start_idx = if (arg_count_stack.items.len > 0)
+                        output_queue.items.len - countActualArguments(&output_queue, output_queue.items.len - arg_count_stack.pop())
+                    else
+                        output_queue.items.len - 1;
+                    const actual_args = countActualArguments(&output_queue, start_idx);
+                    try handleFunction(&output_queue, fun, actual_args, allocator);
                 }
             },
             .left_bracket => {
@@ -488,11 +494,13 @@ fn handleOperator(output_queue: *std.ArrayList(Node), token: Token, allocator: s
 }
 
 fn handleFunction(output_queue: *std.ArrayList(Node), token: Token, arg_count: usize, allocator: std.mem.Allocator) !void {
+    var actual_arg_count = arg_count;
+
     try output_queue.append(Node{
         .type = .function,
         .value = .{ .function = .{
             .name = try allocator.dupe(u8, token.value),
-            .arg_count = arg_count,
+            .arg_count = actual_arg_count,
         } },
     });
 }
@@ -669,4 +677,39 @@ fn cloneNode(allocator: std.mem.Allocator, node: Node) !Node {
     }
 
     return new_node;
+}
+
+fn countActualArguments(output_queue: *const std.ArrayList(Node), start_idx: usize) usize {
+    var count: usize = 0;
+    var skip_count: usize = 0;
+
+    var i = start_idx;
+    while (i < output_queue.items.len) : (i += 1) {
+        if (skip_count > 0) {
+            skip_count -= 1;
+            continue;
+        }
+
+        const node = output_queue.items[i];
+        switch (node.type) {
+            .list => {
+                count += 1;
+                skip_count = node.value.list.element_count - 1;
+            },
+            .function => {
+                count += 1;
+                skip_count = node.value.function.arg_count - 1;
+            },
+            .binary_operator => {
+                count += 1;
+                skip_count = 1; // Skip one more item (we already processed one)
+            },
+            .unary_operator => {
+                count += 1;
+                // No need to skip, the operand was already counted
+            },
+            else => count += 1,
+        }
+    }
+    return count;
 }

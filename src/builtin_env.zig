@@ -12,7 +12,32 @@ fn valueToFloat(value: Value) InterpreterError!f64 {
     };
 }
 
+// Helper function to convert Value to f64
+fn valueToInt(value: Value) InterpreterError!i64 {
+    return switch (value) {
+        .integer => |i| i,
+        .float => |f| @as(i64, @intFromFloat(f)),
+        else => error.TypeError,
+    };
+}
+
 // Math functions
+pub fn builtin_int(args: []const Value) InterpreterError!Value {
+    if (args.len != 1) return error.InvalidArgCount;
+
+    return Value{ .integer = try valueToInt(args[0]) };
+}
+
+pub fn builtin_float(args: []const Value) InterpreterError!Value {
+    if (args.len != 1) return error.InvalidArgCount;
+    return Value{ .float = try valueToFloat(args[0]) };
+}
+
+pub fn builtin_bool(args: []const Value) InterpreterError!Value {
+    if (args.len != 1) return error.InvalidArgCount;
+    return Value{ .boolean = try valueToInt(args[0]) != 0 };
+}
+
 pub fn min(args: []const Value) InterpreterError!Value {
     if (args.len < 1) return error.InvalidArgCount;
 
@@ -176,6 +201,15 @@ fn listLength(args: []const Value) InterpreterError!Value {
     return Value{ .integer = @intCast(list.len) };
 }
 
+fn listGet(args: []const Value) InterpreterError!Value {
+    if (args.len != 2) return error.InvalidArgCount;
+    const list = switch (args[0]) {
+        .list => |l| l,
+        else => return error.TypeError,
+    };
+    return list[@intCast(args[1].integer)];
+}
+
 fn listAppend(args: []const Value) InterpreterError!Value {
     if (args.len != 2) return error.InvalidArgCount;
     const list = switch (args[0]) {
@@ -278,7 +312,7 @@ pub const functions = std.ComptimeStringMap(*const fn ([]const Value) Interprete
     .{ "list.length", listLength },
     .{ "list.append", listAppend },
     //     "list.concat": concat_lists,
-    //     "list.get": list_get,
+    .{ "list.get", listGet },
     //     "list.put": list_put,
     //     "list.slice": slice_list,
     //     "list.map": list_map,

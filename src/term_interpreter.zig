@@ -132,40 +132,40 @@ fn evaluateUnaryOperator(allocator: Allocator, node: *const Node, env: *Environm
 }
 
 fn evaluateFunction(allocator: Allocator, node: *const Node, env: *Environment) InterpreterError!Value {
-    const func_name = node.value.function.name;
-    const func = builtin_env.get(func_name) orelse return error.UndefinedIdentifier;
-
     var args = try allocator.alloc(Value, node.value.function.arg_count);
-    defer allocator.free(args);
-
-    if (node.args == null or node.args.?.len < node.value.function.arg_count) {
-        return error.InvalidArgCount;
+    defer {
+        for (args) |arg| {
+            deinitValue(allocator, arg);
+        }
+        allocator.free(args);
     }
 
     for (0..node.value.function.arg_count) |i| {
         args[i] = try evaluate(allocator, &node.args.?[i], env);
     }
 
-    return func(args) catch |err| switch (err) {
-        error.OutOfMemory => error.OutOfMemory,
-        error.TypeError => error.TypeError,
-        error.InvalidArgCount => error.InvalidArgCount,
-        error.DivisionByZero => error.DivisionByZero,
-        else => error.InvalidOperation,
-    };
+    // TODO: get the function from env not builtin_env
+    const func = builtin_env.get(node.value.function.name) orelse return error.UndefinedIdentifier;
+    const func_result = try func(args);
+
+    return func_result;
 }
 
 fn evaluateList(allocator: Allocator, node: *const Node, env: *Environment) InterpreterError!Value {
     if (node.args == null) return error.InvalidArgCount;
 
     const elements = try allocator.alloc(Value, node.value.list.element_count);
-    errdefer allocator.free(elements);
+    errdefer {
+        for (elements) |element| {
+            deinitValue(allocator, element);
+        }
+        allocator.free(elements);
+    }
 
     for (0..node.value.list.element_count) |i| {
         elements[i] = try evaluate(allocator, &node.args.?[i], env);
     }
 
-    // The caller is responsible for freeing the list
     return Value{ .list = elements };
 }
 
