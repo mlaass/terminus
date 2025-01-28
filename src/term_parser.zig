@@ -11,6 +11,7 @@ pub const TokenType = enum {
     left_bracket,
     right_bracket,
     comma,
+    unary_operator,
 };
 
 pub const Token = struct {
@@ -31,27 +32,27 @@ pub const patterns = struct {
 
 // Binary operators and their precedence
 pub const binary_operators = std.ComptimeStringMap(u8, .{
-    .{ "+", 6 },
-    .{ "-", 6 },
-    .{ "*", 7 },
-    .{ "/", 7 },
-    .{ "//", 7 },
-    .{ "**", 9 },
-    .{ "mod", 7 },
-    .{ "%", 7 },
-    .{ "<", 5 },
-    .{ "<=", 5 },
-    .{ ">", 5 },
-    .{ ">=", 5 },
-    .{ "==", 4 },
-    .{ "!=", 4 },
-    .{ "and", 2 },
-    .{ "or", 1 },
-    .{ "|", 3 },
-    .{ "&", 3 },
-    .{ "xor", 3 },
-    .{ "<<", 8 },
-    .{ ">>", 8 },
+    .{ "+", 4 },
+    .{ "-", 4 },
+    .{ "*", 5 },
+    .{ "/", 5 },
+    .{ "//", 5 },
+    .{ "**", 6 },
+    .{ "mod", 5 },
+    .{ "%", 5 },
+    .{ "<", 3 },
+    .{ "<=", 3 },
+    .{ ">", 3 },
+    .{ ">=", 3 },
+    .{ "==", 2 },
+    .{ "!=", 2 },
+    .{ "and", 1 },
+    .{ "or", 0 },
+    .{ "|", 1 },
+    .{ "&", 1 },
+    .{ "xor", 1 },
+    .{ "<<", 4 },
+    .{ ">>", 4 },
 });
 
 // Unary operators
@@ -128,6 +129,93 @@ pub const Node = struct {
     }
 };
 
+const ParserState = struct {
+    // Define ContextType as a named enum
+    const ContextType = enum {
+        function,
+        list,
+    };
+
+    const Context = struct {
+        context_type: ContextType,
+        start_idx: usize,
+        count: usize,
+    };
+
+    context_stack: std.ArrayList(Context),
+    operator_stack: std.ArrayList(Token),
+    output_queue: std.ArrayList(Node),
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) ParserState {
+        return .{
+            .context_stack = std.ArrayList(Context).init(allocator),
+            .operator_stack = std.ArrayList(Token).init(allocator),
+            .output_queue = std.ArrayList(Node).init(allocator),
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *ParserState) void {
+        self.context_stack.deinit();
+        self.operator_stack.deinit();
+        // Note: output_queue ownership is transferred to caller
+    }
+
+    pub fn pushContext(self: *ParserState, ctx_type: ContextType) !void {
+        try self.context_stack.append(.{
+            .context_type = ctx_type,
+            .start_idx = self.output_queue.items.len,
+            .count = 0,
+        });
+    }
+
+    pub fn currentContext(self: *ParserState) ?*Context {
+        return if (self.context_stack.items.len > 0)
+            &self.context_stack.items[self.context_stack.items.len - 1]
+        else
+            null;
+    }
+
+    pub fn popContext(self: *ParserState) !void {
+        if (self.context_stack.items.len == 0) return error.UnbalancedExpression;
+
+        const ctx = self.context_stack.pop();
+        const node_type: NodeType = switch (ctx.context_type) {
+            .function => .function,
+            .list => .list,
+        };
+
+        // Create appropriate node based on context type
+        switch (ctx.context_type) {
+            .function => {
+                const fun = self.operator_stack.pop();
+                try self.output_queue.append(Node{
+                    .type = node_type,
+                    .value = .{ .function = .{
+                        .name = try self.allocator.dupe(u8, fun.value),
+                        .arg_count = ctx.count,
+                    } },
+                });
+            },
+            .list => {
+                try self.output_queue.append(Node{
+                    .type = node_type,
+                    .value = .{ .list = .{
+                        .element_count = ctx.count,
+                    } },
+                });
+            },
+        }
+    }
+
+    pub fn incrementCount(self: *ParserState) void {
+        if (self.currentContext()) |ctx| {
+            ctx.count += 1;
+        }
+    }
+};
+
 pub fn tokenize(allocator: std.mem.Allocator, expression: []const u8) ![]Token {
     if (expression.len == 0) {
         return &[_]Token{};
@@ -146,8 +234,14 @@ pub fn tokenize(allocator: std.mem.Allocator, expression: []const u8) ![]Token {
         }
 
         // Handle negative numbers: look for minus sign followed by digit or decimal point
+        // Only treat as part of number if it's at the start or after an operator/opening parenthesis
         if (expr[i] == '-' and i + 1 < expr.len and
-            (std.ascii.isDigit(expr[i + 1]) or expr[i + 1] == '.'))
+            (std.ascii.isDigit(expr[i + 1]) or expr[i + 1] == '.') and
+            (i == 0 or (i > 0 and (tokens.items.len == 0 or
+            tokens.items[tokens.items.len - 1].type == .operator or
+            tokens.items[tokens.items.len - 1].type == .left_paren or
+            tokens.items[tokens.items.len - 1].type == .left_bracket or
+            tokens.items[tokens.items.len - 1].type == .comma))))
         {
             // Find the end of the number
             var j = i + 1;
@@ -173,29 +267,55 @@ pub fn tokenize(allocator: std.mem.Allocator, expression: []const u8) ![]Token {
         }
 
         // Match operators first
-        if (i + 1 < expr.len and (std.mem.eql(u8, expr[i .. i + 2], "==") or
-            std.mem.eql(u8, expr[i .. i + 2], "!=") or
-            std.mem.eql(u8, expr[i .. i + 2], "<=") or
-            std.mem.eql(u8, expr[i .. i + 2], ">=") or
-            std.mem.eql(u8, expr[i .. i + 2], "**") or
-            std.mem.eql(u8, expr[i .. i + 2], "//")))
-        {
-            try tokens.append(.{ .type = .operator, .value = try allocator.dupe(u8, expr[i .. i + 2]) });
-            i += 2;
-            continue;
+        // match from binary_operators keys
+        if (i + 2 < expr.len) {
+            const c = expr[i .. i + 2];
+            if (binary_operators.has(c)) {
+                // std.debug.print("expr[i .. i+2]: {s}\n", .{expr[i .. i + 2]});
+                try tokens.append(.{ .type = .operator, .value = try allocator.dupe(u8, c) });
+                i += 2;
+                continue;
+            }
+            if (unary_operators.has(c)) {
+                // std.debug.print("expr[i .. i+2]: {s}\n", .{expr[i .. i + 2]});
+                try tokens.append(.{ .type = .unary_operator, .value = try allocator.dupe(u8, c) });
+                i += 2;
+                continue;
+            }
+        }
+        if (i + 3 < expr.len) {
+            const c = expr[i .. i + 3];
+            if (binary_operators.has(c)) {
+                // std.debug.print("expr[i .. i+3]: {s}\n", .{expr[i .. i + 3]});
+                try tokens.append(.{ .type = .operator, .value = try allocator.dupe(u8, c) });
+                i += 3;
+                continue;
+            }
+            if (unary_operators.has(c)) {
+                // std.debug.print("expr[i .. i+3]: {s}\n", .{expr[i .. i + 3]});
+                try tokens.append(.{ .type = .unary_operator, .value = try allocator.dupe(u8, c) });
+                i += 3;
+                continue;
+            }
         }
 
         // Single character operators and symbols
-        if (std.mem.indexOfScalar(u8, "+-*/%()<>!=,[]!", expr[i]) != null) {
+        if (std.mem.indexOfScalar(u8, "+-*/%()<>!,[]&", expr[i]) != null) {
             const c = [_]u8{expr[i]};
-            try tokens.append(.{ .type = switch (expr[i]) {
+            const token_type: TokenType = switch (expr[i]) {
                 '(' => .left_paren,
                 ')' => .right_paren,
                 '[' => .left_bracket,
                 ']' => .right_bracket,
                 ',' => .comma,
+                '-' => if (i == 0 or (i > 0 and (tokens.items.len == 0 or
+                    tokens.items[tokens.items.len - 1].type == .operator or
+                    tokens.items[tokens.items.len - 1].type == .left_paren or
+                    tokens.items[tokens.items.len - 1].type == .left_bracket or
+                    tokens.items[tokens.items.len - 1].type == .comma))) .unary_operator else .operator,
                 else => .operator,
-            }, .value = try allocator.dupe(u8, &c) });
+            };
+            try tokens.append(.{ .type = token_type, .value = try allocator.dupe(u8, &c) });
             i += 1;
             continue;
         }
@@ -241,8 +361,8 @@ pub fn tokenize(allocator: std.mem.Allocator, expression: []const u8) ![]Token {
         }
 
         // Numbers
-        if (std.ascii.isDigit(expr[i]) or (expr[i] == '-' and i + 1 < expr.len and std.ascii.isDigit(expr[i + 1])) or (expr[i] == '.' and i + 1 < expr.len and std.ascii.isDigit(expr[i + 1]))) {
-            var j = if (expr[i] == '-' or expr[i] == '.') i + 1 else i;
+        if (std.ascii.isDigit(expr[i]) or (expr[i] == '.' and i + 1 < expr.len and std.ascii.isDigit(expr[i + 1]))) {
+            var j = i;
             var has_dot = false;
             var has_e = false;
             var has_sign = false;
@@ -272,27 +392,26 @@ pub fn tokenize(allocator: std.mem.Allocator, expression: []const u8) ![]Token {
         i += 1;
     }
 
-    //  return the ArrayList
     return tokens.toOwnedSlice();
 }
 
-pub fn shunting_yard(allocator: std.mem.Allocator, tokens: []const Token) ![]Node {
-    var output_queue = std.ArrayList(Node).init(allocator);
-    errdefer {
-        for (output_queue.items) |*node| {
-            node.deinit(allocator);
-        }
-        output_queue.deinit();
+fn appendOperatorNode(queue: *std.ArrayList(Node), op: Token, allocator: std.mem.Allocator) !void {
+    if (op.type == .unary_operator) {
+        try queue.append(Node{
+            .type = .unary_operator,
+            .value = .{ .operator = try allocator.dupe(u8, op.value) },
+        });
+    } else {
+        try queue.append(Node{
+            .type = .binary_operator,
+            .value = .{ .operator = try allocator.dupe(u8, op.value) },
+        });
     }
+}
 
-    var operator_stack = std.ArrayList(Token).init(allocator);
-    defer operator_stack.deinit();
-
-    var arg_count_stack = std.ArrayList(usize).init(allocator);
-    defer arg_count_stack.deinit();
-
-    var element_count_stack = std.ArrayList(usize).init(allocator);
-    defer element_count_stack.deinit();
+pub fn shunting_yard(allocator: std.mem.Allocator, tokens: []const Token) ![]Node {
+    var state = ParserState.init(allocator);
+    defer state.deinit();
 
     var i: usize = 0;
     while (i < tokens.len) : (i += 1) {
@@ -307,13 +426,13 @@ pub fn shunting_yard(allocator: std.mem.Allocator, tokens: []const Token) ![]Nod
 
                 if (is_float) {
                     const value = try std.fmt.parseFloat(f64, token.value);
-                    try output_queue.append(Node{
+                    try state.output_queue.append(Node{
                         .type = .literal_float,
                         .value = .{ .float = value },
                     });
                 } else {
                     const value = try std.fmt.parseInt(i64, token.value, 10);
-                    try output_queue.append(Node{
+                    try state.output_queue.append(Node{
                         .type = .literal_integer,
                         .value = .{ .integer = value },
                     });
@@ -321,14 +440,14 @@ pub fn shunting_yard(allocator: std.mem.Allocator, tokens: []const Token) ![]Nod
             },
             .string => {
                 const str_value = try allocator.dupe(u8, token.value[1 .. token.value.len - 1]);
-                try output_queue.append(Node{
+                try state.output_queue.append(Node{
                     .type = .literal_string,
                     .value = .{ .string = str_value },
                 });
             },
             .date_string => {
                 const date_value = try allocator.dupe(u8, token.value[2 .. token.value.len - 1]);
-                try output_queue.append(Node{
+                try state.output_queue.append(Node{
                     .type = .literal_date,
                     .value = .{ .date = date_value },
                 });
@@ -340,32 +459,40 @@ pub fn shunting_yard(allocator: std.mem.Allocator, tokens: []const Token) ![]Nod
 
                     if (is_function) {
                         // Push to operator stack as it will be processed when we hit the right paren
-                        try operator_stack.append(token);
+                        try state.operator_stack.append(token);
                     } else {
                         // Regular identifier
                         const id_value = try allocator.dupe(u8, token.value);
-                        try output_queue.append(Node{
+                        try state.output_queue.append(Node{
                             .type = .identifier,
                             .value = .{ .identifier = id_value },
                         });
                     }
                 } else {
-                    try operator_stack.append(token);
+                    try state.operator_stack.append(token);
                 }
             },
-            .operator => {
+            .operator, .unary_operator => {
+                // Check if this is a unary operator
+                const is_unary = token.type == .unary_operator;
+                // std.debug.print("{s}={any}: is_unary: {}\n", .{ token.value, token.type, is_unary });
+
+                const curr_prec = if (is_unary)
+                    100 // Give unary operators highest precedence
+                else
+                    binary_operators.get(token.value) orelse 0;
+
                 // While there's an operator on top of the stack with greater precedence
                 // or equal precedence and left associativity
-                while (operator_stack.items.len > 0) {
-                    const top = operator_stack.items[operator_stack.items.len - 1];
-                    if (top.type == .left_paren) break;
+                while (state.operator_stack.items.len > 0) {
+                    const top = state.operator_stack.items[state.operator_stack.items.len - 1];
 
-                    const curr_prec = if (unary_operators.has(token.value))
-                        100 // Give unary operators highest precedence
-                    else
-                        binary_operators.get(token.value) orelse 0;
+                    if (top.type == .left_paren or top.type == .left_bracket) break;
 
-                    const top_prec = if (unary_operators.has(top.value))
+                    // Check if top operator is unary
+                    const top_is_unary = top.type == .unary_operator;
+
+                    const top_prec = if (top_is_unary)
                         100 // Give unary operators highest precedence
                     else
                         binary_operators.get(top.value) orelse 0;
@@ -374,135 +501,92 @@ pub fn shunting_yard(allocator: std.mem.Allocator, tokens: []const Token) ![]Nod
                     if (top_prec < curr_prec) break;
 
                     // Pop the operator and add it to the output
-                    const op = operator_stack.pop();
-                    try handleOperator(&output_queue, op, allocator);
+                    const op = state.operator_stack.pop();
+                    try appendOperatorNode(&state.output_queue, op, allocator);
                 }
-                try operator_stack.append(token);
+                try state.operator_stack.append(token);
+                // std.debug.print("appending: {s}\n", .{token.value});
             },
             .left_paren => {
-                try operator_stack.append(token);
-                // If the previous token was an identifier, this is a function call
-                // Initialize arg_count to 1 for the first argument
-                if (operator_stack.items.len >= 2 and
-                    operator_stack.items[operator_stack.items.len - 2].type == .identifier)
+                // Check if this is a function call
+                if (state.operator_stack.items.len > 0 and
+                    state.operator_stack.items[state.operator_stack.items.len - 1].type == .identifier)
                 {
-                    try arg_count_stack.append(1);
-                } else {
-                    try arg_count_stack.append(0);
+                    try state.pushContext(.function);
                 }
+                try state.operator_stack.append(token);
             },
             .right_paren => {
-                // When we hit a right parenthesis, pop operators until we find the matching left parenthesis
-                while (operator_stack.items.len > 0 and
-                    operator_stack.items[operator_stack.items.len - 1].type != .left_paren)
+                // Pop operators until left paren
+                while (state.operator_stack.items.len > 0 and
+                    state.operator_stack.items[state.operator_stack.items.len - 1].type != .left_paren)
                 {
-                    const op = operator_stack.pop();
-                    try handleOperator(&output_queue, op, allocator);
+                    const op = state.operator_stack.pop();
+                    try appendOperatorNode(&state.output_queue, op, allocator);
                 }
-                if (operator_stack.items.len == 0) {
-                    return error.UnmatchedParentheses;
-                }
-                _ = operator_stack.pop(); // Remove left parenthesis
 
-                // If the top of the stack is a function token, pop it too
-                if (operator_stack.items.len > 0 and
-                    operator_stack.items[operator_stack.items.len - 1].type == .identifier)
-                {
-                    const fun = operator_stack.pop();
-                    // Count actual arguments by analyzing the output queue
-                    const start_idx = if (arg_count_stack.items.len > 0)
-                        output_queue.items.len - countActualArguments(&output_queue, output_queue.items.len - arg_count_stack.pop())
-                    else
-                        output_queue.items.len - 1;
-                    const actual_args = countActualArguments(&output_queue, start_idx);
-                    try handleFunction(&output_queue, fun, actual_args, allocator);
+                if (state.operator_stack.items.len == 0) return error.UnmatchedParentheses;
+                _ = state.operator_stack.pop(); // Remove left paren
+
+                // Handle function context if present
+                if (state.currentContext()) |ctx| {
+                    if (ctx.context_type == .function) {
+                        // Increment count for the last argument
+                        ctx.count += 1;
+                        try state.popContext();
+                    }
                 }
             },
             .left_bracket => {
-                try operator_stack.append(token);
-                try element_count_stack.append(1); // First element
+                try state.pushContext(.list);
+                try state.operator_stack.append(token);
             },
             .right_bracket => {
-                while (operator_stack.items.len > 0 and operator_stack.items[operator_stack.items.len - 1].type != .left_bracket) {
-                    const op = operator_stack.pop();
-                    try handleOperator(&output_queue, op, allocator);
+                // Pop operators until left bracket
+                while (state.operator_stack.items.len > 0 and
+                    state.operator_stack.items[state.operator_stack.items.len - 1].type != .left_bracket)
+                {
+                    const op = state.operator_stack.pop();
+                    try appendOperatorNode(&state.output_queue, op, allocator);
                 }
-                if (operator_stack.items.len == 0) {
-                    return error.UnmatchedBrackets;
-                }
-                _ = operator_stack.pop(); // Remove left bracket
 
-                if (element_count_stack.items.len > 0) {
-                    // Count the actual elements in the output queue
-                    var element_count = element_count_stack.pop();
-                    // If we have a trailing comma, the last token before this was a comma
-                    // so we need to adjust the count
-                    if (tokens.len >= 2 and tokens[tokens.len - 2].type == .comma) {
-                        element_count -= 1;
-                    }
-                    try output_queue.append(Node{
-                        .type = .list,
-                        .value = .{ .list = .{ .element_count = element_count } },
-                    });
+                if (state.operator_stack.items.len == 0) return error.UnmatchedBrackets;
+                _ = state.operator_stack.pop(); // Remove left bracket
+
+                // Increment count for the last element
+                if (state.currentContext()) |ctx| {
+                    ctx.count += 1;
                 }
+                try state.popContext();
             },
             .comma => {
-                while (operator_stack.items.len > 0 and
-                    operator_stack.items[operator_stack.items.len - 1].type != .left_paren and
-                    operator_stack.items[operator_stack.items.len - 1].type != .left_bracket)
+                // Pop operators until matching delimiter
+                while (state.operator_stack.items.len > 0 and
+                    state.operator_stack.items[state.operator_stack.items.len - 1].type != .left_paren and
+                    state.operator_stack.items[state.operator_stack.items.len - 1].type != .left_bracket)
                 {
-                    const op = operator_stack.pop();
-                    try handleOperator(&output_queue, op, allocator);
+                    const op = state.operator_stack.pop();
+                    try appendOperatorNode(&state.output_queue, op, allocator);
                 }
 
-                if (arg_count_stack.items.len > 0) {
-                    arg_count_stack.items[arg_count_stack.items.len - 1] += 1;
-                }
-                if (element_count_stack.items.len > 0) {
-                    element_count_stack.items[element_count_stack.items.len - 1] += 1;
+                // Increment argument/element count
+                if (state.currentContext()) |ctx| {
+                    ctx.count += 1;
                 }
             },
         }
     }
 
     // Pop any remaining operators
-    while (operator_stack.items.len > 0) {
-        const op = operator_stack.pop();
+    while (state.operator_stack.items.len > 0) {
+        const op = state.operator_stack.pop();
         if (op.type == .left_paren or op.type == .right_paren) {
             return error.UnmatchedParentheses;
         }
-        try handleOperator(&output_queue, op, allocator);
+        try appendOperatorNode(&state.output_queue, op, allocator);
     }
 
-    return output_queue.toOwnedSlice();
-}
-
-fn handleOperator(output_queue: *std.ArrayList(Node), token: Token, allocator: std.mem.Allocator) !void {
-    // Check if it's a unary operator
-    if (unary_operators.has(token.value)) {
-        try output_queue.append(Node{
-            .type = .unary_operator,
-            .value = .{ .operator = try allocator.dupe(u8, token.value) },
-        });
-    } else {
-        // Binary operator
-        try output_queue.append(Node{
-            .type = .binary_operator,
-            .value = .{ .operator = try allocator.dupe(u8, token.value) },
-        });
-    }
-}
-
-fn handleFunction(output_queue: *std.ArrayList(Node), token: Token, arg_count: usize, allocator: std.mem.Allocator) !void {
-    var actual_arg_count = arg_count;
-
-    try output_queue.append(Node{
-        .type = .function,
-        .value = .{ .function = .{
-            .name = try allocator.dupe(u8, token.value),
-            .arg_count = actual_arg_count,
-        } },
-    });
+    return state.output_queue.toOwnedSlice();
 }
 
 pub const ParseTree = struct {
@@ -677,39 +761,4 @@ fn cloneNode(allocator: std.mem.Allocator, node: Node) !Node {
     }
 
     return new_node;
-}
-
-fn countActualArguments(output_queue: *const std.ArrayList(Node), start_idx: usize) usize {
-    var count: usize = 0;
-    var skip_count: usize = 0;
-
-    var i = start_idx;
-    while (i < output_queue.items.len) : (i += 1) {
-        if (skip_count > 0) {
-            skip_count -= 1;
-            continue;
-        }
-
-        const node = output_queue.items[i];
-        switch (node.type) {
-            .list => {
-                count += 1;
-                skip_count = node.value.list.element_count - 1;
-            },
-            .function => {
-                count += 1;
-                skip_count = node.value.function.arg_count - 1;
-            },
-            .binary_operator => {
-                count += 1;
-                skip_count = 1; // Skip one more item (we already processed one)
-            },
-            .unary_operator => {
-                count += 1;
-                // No need to skip, the operand was already counted
-            },
-            else => count += 1,
-        }
-    }
-    return count;
 }

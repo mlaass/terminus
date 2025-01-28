@@ -112,11 +112,11 @@ test "parse function call" {
 test "parse complex expression" {
     const allocator = std.testing.allocator;
 
-    var tree = try parse_to_tree(allocator, "add(1 + 2, mul(3, 4))");
+    var tree = try parse_to_tree(allocator, "max(1 + 2, min(3, 4))");
     defer tree.deinit(allocator);
 
     try std.testing.expectEqual(NodeType.function, tree.root.type);
-    try std.testing.expectEqualStrings("add", tree.root.value.function.name);
+    try std.testing.expectEqualStrings("max", tree.root.value.function.name);
 
     const args = tree.root.args.?;
     try std.testing.expectEqual(NodeType.binary_operator, args[0].type);
@@ -222,7 +222,7 @@ test "tokenize all node types" {
     try std.testing.expectEqual(TokenType.operator, result[21].type);
     try std.testing.expectEqualStrings("and", result[21].value);
 
-    try std.testing.expectEqual(TokenType.operator, result[22].type);
+    try std.testing.expectEqual(TokenType.unary_operator, result[22].type);
     try std.testing.expectEqualStrings("not", result[22].value);
 
     try std.testing.expectEqual(TokenType.identifier, result[23].type);
@@ -618,6 +618,13 @@ test "shunting yard operator precedence" {
             allocator.free(result);
         }
 
+        std.debug.print("\nRPN for '2 + 3 * 4': {}\n", .{result.len});
+        var i: usize = 0;
+        for (result) |node| {
+            i += 1;
+            std.debug.print("  {d}: {s}\n", .{ i, @tagName(node.type) });
+        }
+
         // Expected RPN: 2 3 4 * +
         try std.testing.expectEqual(@as(usize, 5), result.len);
         try std.testing.expectEqual(NodeType.literal_integer, result[0].type);
@@ -641,6 +648,9 @@ test "shunting yard operator precedence" {
             }
             allocator.free(tokens);
         }
+        for (tokens) |token| {
+            std.debug.print("  {s}: {s}\n", .{ @tagName(token.type), token.value });
+        }
 
         const result = try shunting_yard(allocator, tokens);
         defer {
@@ -649,7 +659,16 @@ test "shunting yard operator precedence" {
             }
             allocator.free(result);
         }
-
+        std.debug.print("\nRPN for 'a or b and c': {}\n", .{result.len});
+        var i: usize = 0;
+        for (result) |node| {
+            i += 1;
+            std.debug.print("  {d}: {s} = {s}\n", .{ i, @tagName(node.type), switch (node.type) {
+                .identifier => node.value.identifier,
+                .binary_operator => node.value.operator,
+                else => "other",
+            } });
+        }
         // Expected RPN: a b c and or
         try std.testing.expectEqual(@as(usize, 5), result.len);
         try std.testing.expectEqual(NodeType.identifier, result[0].type);
