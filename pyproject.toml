@@ -37,6 +37,12 @@ select = ["F", "E", "W", "UP", "I001", "I002"]
 [tool.poetry.scripts]
 generate-stubs = "scripts.generate_stubs:main"
 
-[[tool.pydust.ext_module]]
-name = "termynus._lib"
-root = "src/term.zig"
+
+[tool.pydust]
+build_zig= "build_pydust.zig"
+
+    [[tool.pydust.ext_module]]
+    name = "termynus._lib"
+    root = "src/term.zig"
+
+
