@@ -1,8 +1,8 @@
 const std = @import("std");
-const Environment = @import("term_interpreter.zig").Environment;
-const Value = @import("term_interpreter.zig").Value;
-const parse_to_tree = @import("term_parser.zig").parse_to_tree;
-const evaluate = @import("term_interpreter.zig").evaluate;
+const Environment = @import("interpreter_environment.zig").Environment;
+const Value = @import("interpreter.zig").Value;
+const parse_to_tree = @import("parser.zig").parse_to_tree;
+const evaluate = @import("interpreter.zig").evaluate;
 
 test "evaluate simple expression" {
     const allocator = std.testing.allocator;

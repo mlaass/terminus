@@ -1,10 +1,10 @@
 const std = @import("std");
-const parse_to_tree = @import("term_parser.zig").parse_to_tree;
-const evaluate = @import("term_interpreter.zig").evaluate;
-const Environment = @import("term_interpreter.zig").Environment;
-const tokenize = @import("term_parser.zig").tokenize;
-const shunting_yard = @import("term_parser.zig").shunting_yard;
-const Node = @import("term_parser.zig").Node;
+const parse_to_tree = @import("parser.zig").parse_to_tree;
+const evaluate = @import("interpreter.zig").evaluate;
+const Environment = @import("interpreter_environment.zig").Environment;
+const tokenize = @import("parser.zig").tokenize;
+const shunting_yard = @import("parser.zig").shunting_yard;
+const Node = @import("parser.zig").Node;
 
 fn printNode(node: Node) void {
     switch (node.type) {
@@ -145,6 +145,7 @@ pub fn main() !void {
         .boolean => |v| std.debug.print("{}\n", .{v}),
         .string => |v| std.debug.print("{s}\n", .{v}),
         .date => |v| std.debug.print("{s}\n", .{v}),
+        .function_def => std.debug.print("<function_def> {s}\n", .{result.data.function_def.node.value.function.name}),
         .list => |v| {
             std.debug.print("[", .{});
             for (v, 0..) |item, i| {
@@ -156,6 +157,7 @@ pub fn main() !void {
                     .date => |d| std.debug.print("d'{s}'", .{d}),
                     .list => std.debug.print("...", .{}),
                     .function => std.debug.print("<function>", .{}),
+                    .function_def => std.debug.print("<function_def>", .{}),
                 }
                 if (i < v.len - 1) std.debug.print(", ", .{});
             }

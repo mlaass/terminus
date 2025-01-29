@@ -1,8 +1,10 @@
 const std = @import("std");
-const Value = @import("term_interpreter.zig").Value;
-const InterpreterError = @import("term_interpreter.zig").InterpreterError;
+const Value = @import("interpreter.zig").Value;
+const InterpreterError = @import("interpreter.zig").InterpreterError;
+const Environment = @import("interpreter_environment.zig").Environment;
 const Allocator = std.mem.Allocator;
 const calcUtf16LeLen = @import("std").unicode.calcUtf16LeLen;
+const parse_to_tree = @import("parser.zig").parse_to_tree;
 
 // Helper function to convert Value to f64
 fn valueToFloat(value: Value) InterpreterError!f64 {
@@ -21,8 +23,7 @@ fn valueToInt(value: Value) InterpreterError!i64 {
         else => error.TypeError,
     };
 }
-
-// Math functions
+// core functions
 pub fn coreInt(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
 
@@ -39,7 +40,8 @@ pub fn coreBool(_: Allocator, args: []const Value) InterpreterError!Value {
     return Value{ .data = .{ .boolean = try valueToInt(args[0]) != 0 } };
 }
 
-pub fn min(_: Allocator, args: []const Value) InterpreterError!Value {
+// Math functions
+pub fn min(args: []const Value) InterpreterError!Value {
     if (args.len < 1) return error.InvalidArgCount;
 
     // Keep track of both the float value for comparison and the original value
@@ -57,7 +59,7 @@ pub fn min(_: Allocator, args: []const Value) InterpreterError!Value {
     return min_orig;
 }
 
-pub fn max(_: Allocator, args: []const Value) InterpreterError!Value {
+pub fn max(args: []const Value) InterpreterError!Value {
     if (args.len < 1) return error.InvalidArgCount;
 
     // Keep track of both the float value for comparison and the original value
@@ -75,37 +77,37 @@ pub fn max(_: Allocator, args: []const Value) InterpreterError!Value {
     return max_orig;
 }
 
-pub fn log(_: Allocator, args: []const Value) InterpreterError!Value {
+pub fn log(args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
     return Value{ .data = .{ .float = @log(x) } };
 }
 
-pub fn log2(_: Allocator, args: []const Value) InterpreterError!Value {
+pub fn log2(args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
     return Value{ .data = .{ .float = @log2(x) } };
 }
 
-pub fn log10(_: Allocator, args: []const Value) InterpreterError!Value {
+pub fn log10(args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
     return Value{ .data = .{ .float = @log10(x) } };
 }
 
-pub fn exp(_: Allocator, args: []const Value) InterpreterError!Value {
+pub fn exp(args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
     return Value{ .data = .{ .float = @exp(x) } };
 }
 
-pub fn sqrt(_: Allocator, args: []const Value) InterpreterError!Value {
+pub fn sqrt(args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
     return Value{ .data = .{ .float = @sqrt(x) } };
 }
 
-pub fn mean(_: Allocator, args: []const Value) InterpreterError!Value {
+pub fn mean(args: []const Value) InterpreterError!Value {
     if (args.len == 0) return error.InvalidArgCount;
 
     var sum: f64 = 0;
@@ -115,7 +117,7 @@ pub fn mean(_: Allocator, args: []const Value) InterpreterError!Value {
     return Value{ .data = .{ .float = sum / @as(f64, @floatFromInt(args.len)) } };
 }
 
-pub fn abs(_: Allocator, args: []const Value) InterpreterError!Value {
+pub fn abs(args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
     return switch (args[0].data) {
@@ -125,13 +127,13 @@ pub fn abs(_: Allocator, args: []const Value) InterpreterError!Value {
     };
 }
 
-pub fn ceil(_: Allocator, args: []const Value) InterpreterError!Value {
+pub fn ceil(args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
     return Value{ .data = .{ .float = @ceil(x) } };
 }
 
-pub fn floor(_: Allocator, args: []const Value) InterpreterError!Value {
+pub fn floor(args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
     return Value{ .data = .{ .float = @floor(x) } };
@@ -439,17 +441,53 @@ fn listFilter(allocator: Allocator, args: []const Value) InterpreterError!Value 
     return Value{ .data = .{ .list = result }, .allocator = allocator };
 }
 
+fn coreDef(allocator: Allocator, args: []const Value, env: *Environment) InterpreterError!Value {
+    if (args.len != 3) return error.InvalidArgCount;
+    const name = args[0].data.string;
+    const arg_list = args[1].data.list;
+    // Verify all arguments in the list are strings
+    for (arg_list) |arg| {
+        if (arg.data != .string) return error.TypeError;
+    }
+
+    // Clone the argument list
+    var cloned_args = try allocator.alloc(Value, arg_list.len);
+    errdefer allocator.free(cloned_args);
+    for (arg_list, 0..) |arg, i| {
+        cloned_args[i] = try arg.clone(allocator);
+    }
+
+    const func_def = parse_to_tree(allocator, args[2].data.string) catch return error.InvalidOperation;
+    try env.put(name, Value{ .data = .{ .function_def = .{
+        .node = &func_def.root,
+        .arg_names = cloned_args,
+    } } });
+    return Value{ .data = .{ .boolean = true } };
+}
+
 // Constants
 pub const constants = std.ComptimeStringMap(Value, .{
+    // Mathematical constants
     .{ "pi", Value{ .data = .{ .float = std.math.pi } } },
     .{ "e", Value{ .data = .{ .float = std.math.e } } },
-    .{ "inf", Value{ .data = .{ .float = std.math.inf(f64) } } },
     .{ "tau", Value{ .data = .{ .float = std.math.tau } } },
+    .{ "inf", Value{ .data = .{ .float = std.math.inf(f64) } } },
     .{ "nan", Value{ .data = .{ .float = std.math.nan(f64) } } },
+
+    // Boolean constants
+    .{ "true", Value{ .data = .{ .boolean = true } } },
+    .{ "false", Value{ .data = .{ .boolean = false } } },
+
+    // Collection constants
+    .{ "empty", Value{ .data = .{ .list = &[_]Value{} } } },
 });
 
 // Function map
-pub const functions = std.ComptimeStringMap(*const fn (Allocator, []const Value) InterpreterError!Value, .{
+pub const env_functions = std.ComptimeStringMap(*const fn (Allocator, []const Value, *Environment) InterpreterError!Value, .{
+    .{ "def", coreDef },
+});
+
+pub const alloc_functions = std.ComptimeStringMap(*const fn (Allocator, []const Value) InterpreterError!Value, .{
     // core functions
     .{ "int", coreInt },
     .{ "float", coreFloat },
@@ -457,37 +495,7 @@ pub const functions = std.ComptimeStringMap(*const fn (Allocator, []const Value)
     // .{ "string", coreString },
     // .{ "date", coreDate },
     // .{ "list", coreList },
-    // .{ "def", coreDef },
     //
-
-    // math stuff
-    .{ "min", min },
-    .{ "max", max },
-    .{ "abs", abs },
-    .{ "floor", floor },
-    .{ "ceil", ceil },
-    .{ "log", log },
-    .{ "log2", log2 },
-    // .{ "log1p", log1p },
-    .{ "log10", log10 },
-    .{ "exp", exp },
-    .{ "sqrt", sqrt },
-    // .{ "fsum", fsum },
-    // .{ "gcd", gcd },
-    // .{ "isqrt", isqrt },
-    // .{ "cos", cos },
-    // .{ "sin", sin },
-    // .{ "tan", tan },
-    // .{ "acos", acos },
-    // .{ "asin", asin },
-    // .{ "atan", atan },
-    // .{ "degrees", degrees },
-    // .{ "radians", radians },
-    .{ "mean", mean },
-    // .{ "fmean", fmean },
-    // .{ "geometric_mean", geometric_mean },
-    // .{ "median", median },
-    // .{ "stdev", stdev },
 
     // string stuff
     // .{ "variance", variance },
@@ -573,7 +581,34 @@ pub const functions = std.ComptimeStringMap(*const fn (Allocator, []const Value)
     // .{ "func.curryN", funcCurryN},
     // .{ "func.curryRightN", funcCurryRightN},
 });
+pub const simple_functions = std.ComptimeStringMap(*const fn ([]const Value) InterpreterError!Value, .{
 
-pub fn get(name: []const u8) ?*const fn (Allocator, []const Value) InterpreterError!Value {
-    return functions.get(name) orelse constants.get(name);
-}
+    // math stuff
+    .{ "min", min },
+    .{ "max", max },
+    .{ "abs", abs },
+    .{ "floor", floor },
+    .{ "ceil", ceil },
+    .{ "log", log },
+    .{ "log2", log2 },
+    // .{ "log1p", log1p },
+    .{ "log10", log10 },
+    .{ "exp", exp },
+    .{ "sqrt", sqrt },
+    // .{ "fsum", fsum },
+    // .{ "gcd", gcd },
+    // .{ "isqrt", isqrt },
+    // .{ "cos", cos },
+    // .{ "sin", sin },
+    // .{ "tan", tan },
+    // .{ "acos", acos },
+    // .{ "asin", asin },
+    // .{ "atan", atan },
+    // .{ "degrees", degrees },
+    // .{ "radians", radians },
+    .{ "mean", mean },
+    // .{ "fmean", fmean },
+    // .{ "geometric_mean", geometric_mean },
+    // .{ "median", median },
+    // .{ "stdev", stdev },
+});

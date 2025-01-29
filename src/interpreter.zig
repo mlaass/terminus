@@ -1,8 +1,9 @@
 const std = @import("std");
-const Node = @import("term_parser.zig").Node;
-const parse_to_tree = @import("term_parser.zig").parse_to_tree;
+const Node = @import("parser.zig").Node;
+const parse_to_tree = @import("parser.zig").parse_to_tree;
 const Allocator = std.mem.Allocator;
-const builtin_env = @import("builtin_env.zig"); // Assume this contains your built-in functions
+const builtin = @import("interpreter_builtin.zig");
+const Environment = @import("interpreter_environment.zig").Environment;
 
 pub const Value = struct {
     data: union(enum) {
@@ -13,6 +14,10 @@ pub const Value = struct {
         date: []const u8,
         list: []Value,
         function: *const fn (args: []const Value) InterpreterError!Value,
+        function_def: struct {
+            node: *const Node,
+            arg_names: []const Value,
+        },
     },
 
     allocator: ?Allocator = null, // Track the allocator for owned memory
@@ -20,6 +25,7 @@ pub const Value = struct {
     /// Clone a value, making deep copies of any owned memory
     pub fn clone(self: Value, allocator: Allocator) !Value {
         return switch (self.data) {
+            .function_def => |node| Value{ .data = .{ .function_def = node } },
             .integer => |i| Value{ .data = .{ .integer = i } },
             .float => |f| Value{ .data = .{ .float = f } },
             .boolean => |b| Value{ .data = .{ .boolean = b } },
@@ -54,6 +60,12 @@ pub const Value = struct {
             switch (self.data) {
                 .string => |s| allocator.free(s),
                 .date => |d| allocator.free(d),
+                .function_def => |node| {
+                    for (node.arg_names) |arg| {
+                        arg.deinit();
+                    }
+                    allocator.free(node.arg_names);
+                },
                 .list => |list| {
                     for (list) |*item| {
                         item.deinit();
@@ -73,36 +85,6 @@ pub const InterpreterError = error{
     TypeError,
     InvalidArgCount,
     OutOfMemory,
-};
-
-pub const Environment = struct {
-    store: std.StringHashMap(Value),
-    parent: ?*Environment,
-
-    pub fn init(allocator: Allocator, parent: ?*Environment) Environment {
-        return .{
-            .store = std.StringHashMap(Value).init(allocator),
-            .parent = parent,
-        };
-    }
-
-    pub fn deinit(self: *Environment) void {
-        self.store.deinit();
-    }
-
-    pub fn get(self: *const Environment, name: []const u8) ?Value {
-        if (self.store.get(name)) |value| {
-            return value;
-        } else if (self.parent) |parent| {
-            return parent.get(name);
-        } else {
-            return null;
-        }
-    }
-
-    pub fn put(self: *Environment, name: []const u8, value: Value) !void {
-        try self.store.put(name, value);
-    }
 };
 
 pub const CompareOp = enum { gt, lt, eq, neq, gte, lte };
@@ -197,12 +179,31 @@ fn evaluateFunction(allocator: Allocator, node: *const Node, env: *Environment) 
         args[i] = try evaluate(allocator, &node.args.?[i], env);
     }
 
-    // TODO: get the function from env first and then builtin_env
-    const func = builtin_env.get(node.value.function.name) orelse return error.UndefinedIdentifier;
-
-    const func_result = try func(allocator, args);
-
-    return func_result;
+    // get the function from env first and then builtin.functions
+    var env_func = env.get(node.value.function.name);
+    if (env_func) |func| {
+        var func_node = func.data.function_def;
+        var stack_env = Environment.init(allocator, env);
+        defer stack_env.deinit();
+        if (func_node.arg_names.len != args.len) return error.InvalidArgCount;
+        std.debug.print("func_node.arg_names: {any}\n", .{func_node.arg_names});
+        for (0..func_node.arg_names.len) |i| {
+            try stack_env.put(func_node.arg_names[i].data.string, args[i]);
+        }
+        return evaluate(allocator, func_node.node, &stack_env);
+    } else {
+        if (builtin.env_functions.get(node.value.function.name)) |func| {
+            const func_result = try func(allocator, args, env);
+            return func_result;
+        } else if (builtin.alloc_functions.get(node.value.function.name)) |func| {
+            const func_result = try func(allocator, args);
+            return func_result;
+        } else if (builtin.simple_functions.get(node.value.function.name)) |func| {
+            const func_result = try func(args);
+            return func_result;
+        }
+    }
+    return error.UndefinedIdentifier;
 }
 
 fn evaluateList(allocator: Allocator, node: *const Node, env: *Environment) InterpreterError!Value {

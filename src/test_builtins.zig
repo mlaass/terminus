@@ -7,78 +7,6 @@ const evaluate = @import("term_interpreter.zig").evaluate;
 const parse_to_tree = @import("term_parser.zig").parse_to_tree;
 const InterpreterError = @import("term_interpreter.zig").InterpreterError;
 
-// builtin_env = {
-//     # math
-//     "min": min,
-//     "max": max,
-//     "log": math.log,
-//     "log1p": math.log1p,
-//     "log2": math.log2,
-//     "log10": math.log10,
-//     "exp": math.exp,
-//     "fsum": math.fsum,
-//     "gcd": math.gcd,
-//     "sqrt": math.sqrt,
-//     "isqrt": math.isqrt,
-//     "cos": math.cos,
-//     "sin": math.sin,
-//     "tan": math.tan,
-//     "acos": math.acos,
-//     "asin": math.asin,
-//     "atan": math.atan,
-//     "degrees": math.degrees,
-//     "radians": math.radians,
-//     "mean": builtin_mean,
-//     "fmean": builtin_fmean,
-//     "geometric_mean": builtin_geometric_mean,
-//     "median": builtin_median,
-//     "stdev": builtin_stdev,
-//     "variance": builtin_variance,
-//     "pi": math.pi,
-//     "e": math.e,
-//     "inf": math.inf,
-//     "tau": math.tau,
-//     "nan": math.nan,
-//     # string functions:
-//     "str.concat": builtin_concat,
-//     "str.length": builtin_length,
-//     "str.substring": builtin_substring,
-//     "str.replace": builtin_replace,
-//     "str.toUpper": builtin_to_upper,
-//     "str.toLower": builtin_to_lower,
-//     "str.trim": builtin_trim,
-//     "str.split": builtin_split,
-//     "str.indexOf": builtin_index_of,
-//     "str.contains": builtin_contains,
-//     "str.startsWith": builtin_starts_with,
-//     "str.endsWith": builtin_ends_with,
-//     "str.regexMatch": builtin_regex_match,
-//     "str.format": builtin_format,
-//     # date stuff
-//     "date.parse": parse_iso_date,
-//     "date.format": format_date,
-//     "date.addDays": add_days,
-//     "date.addHours": add_hours,
-//     "date.addMinutes": add_minutes,
-//     "date.addSeconds": add_seconds,
-//     "date.dayOfWeek": day_of_week,
-//     "date.dayOfMonth": day_of_month,
-//     "date.dayOfYear": day_of_year,
-//     "date.month": month_of_year,
-//     "date.year": year_of_date,
-//     "date.week": week_of_year,
-//     # list stuff
-//     "list.length": len,
-//     "list.append": append_to_list,
-//     "list.concat": concat_lists,
-//     "list.get": list_get,
-//     "list.put": list_put,
-//     "list.slice": slice_list,
-//     "list.map": list_map,
-//     "list.filter": list_filter,
-//     "apply": apply_function,
-// }
-
 fn expectEqualValue(expected: Value, actual: Value) !void {
     switch (expected.data) {
         .integer => |i| try testing.expectEqual(i, actual.data.integer),
@@ -118,6 +46,35 @@ fn list(allocator: std.mem.Allocator, items: []const Value) !Value {
     var new_list = try allocator.alloc(Value, items.len);
     @memcpy(new_list, items);
     return Value{ .data = .{ .list = new_list }, .allocator = allocator };
+}
+
+test "builtin environment constants" {
+    const allocator = std.testing.allocator;
+    var env = Environment.init(allocator, builtin_env.constants);
+    defer env.deinit();
+
+    // Set up environment
+
+    // Test variable access
+    var tree_var_access = try parse_to_tree(allocator, "pi");
+    defer tree_var_access.deinit(allocator);
+    var result = try evaluate(allocator, &tree_var_access.root, &env);
+    defer result.deinit();
+    try std.testing.expectEqual(Value{ .data = .{ .float = std.math.pi } }, result);
+
+    // Test mixed variable types
+    var tree_inf = try parse_to_tree(allocator, "inf");
+    defer tree_inf.deinit(allocator);
+    var result_inf = try evaluate(allocator, &tree_inf.root, &env);
+    defer result_inf.deinit();
+    try std.testing.expectEqual(Value{ .data = .{ .float = std.math.inf(f64) } }, result_inf);
+
+    // Test undefined variable
+    var tree_nan = try parse_to_tree(allocator, "nan");
+    defer tree_nan.deinit(allocator);
+    var result_nan = try evaluate(allocator, &tree_nan.root, &env);
+    defer result_nan.deinit();
+    try std.testing.expectEqual(Value{ .data = .{ .float = std.math.nan(f64) } }, result_nan);
 }
 
 test "builtin arithmetic functions" {

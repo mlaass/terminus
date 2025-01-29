@@ -1,11 +1,12 @@
 const std = @import("std");
-const Node = @import("term_parser.zig").Node;
-const NodeType = @import("term_parser.zig").NodeType;
-const TokenType = @import("term_parser.zig").TokenType;
-const Token = @import("term_parser.zig").Token;
-const tokenize = @import("term_parser.zig").tokenize;
-const shunting_yard = @import("term_parser.zig").shunting_yard;
-const parse_to_tree = @import("term_parser.zig").parse_to_tree;
+
+const Node = @import("parser.zig").Node;
+const NodeType = @import("parser.zig").NodeType;
+const TokenType = @import("parser.zig").TokenType;
+const Token = @import("parser.zig").Token;
+const tokenize = @import("parser.zig").tokenize;
+const shunting_yard = @import("parser.zig").shunting_yard;
+const parse_to_tree = @import("parser.zig").parse_to_tree;
 
 test "tokenize simple case" {
     const allocator = std.testing.allocator;
