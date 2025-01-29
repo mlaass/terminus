@@ -1,0 +1,32 @@
+{
+  "name": "termynus",
+  "version": "0.1.0",
+  "description": "A WebAssembly-powered term evaluator written in zig",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "lib"
+  ],
+  "scripts": {
+    "build": "zig build && tsc",
+    "prepare": "npm run build",
+    "test": "jest"
+  },
+  "keywords": [
+    "term",
+    "evaluator",
+    "parser",
+    "wasm",
+    "webassembly"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "jest": "^29.0.0",
+    "@types/jest": "^29.0.0",
+    "ts-jest": "^29.0.0"
+  }
+}
