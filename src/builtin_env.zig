@@ -2,6 +2,7 @@ const std = @import("std");
 const Value = @import("term_interpreter.zig").Value;
 const InterpreterError = @import("term_interpreter.zig").InterpreterError;
 const Allocator = std.mem.Allocator;
+const calcUtf16LeLen = @import("std").unicode.calcUtf16LeLen;
 
 // Helper function to convert Value to f64
 fn valueToFloat(value: Value) InterpreterError!f64 {
@@ -22,18 +23,18 @@ fn valueToInt(value: Value) InterpreterError!i64 {
 }
 
 // Math functions
-pub fn builtin_int(_: Allocator, args: []const Value) InterpreterError!Value {
+pub fn coreInt(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
 
     return Value{ .data = .{ .integer = try valueToInt(args[0]) } };
 }
 
-pub fn builtin_float(_: Allocator, args: []const Value) InterpreterError!Value {
+pub fn coreFloat(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     return Value{ .data = .{ .float = try valueToFloat(args[0]) } };
 }
 
-pub fn builtin_bool(_: Allocator, args: []const Value) InterpreterError!Value {
+pub fn coreBool(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     return Value{ .data = .{ .boolean = try valueToInt(args[0]) != 0 } };
 }
@@ -174,7 +175,112 @@ fn strLength(_: Allocator, args: []const Value) InterpreterError!Value {
         .string => |s| s,
         else => return error.TypeError,
     };
-    return Value{ .data = .{ .integer = @intCast(str.len) } };
+    const len = calcUtf16LeLen(str) catch return error.InvalidOperation;
+
+    return Value{ .data = .{ .integer = @intCast(len) } };
+}
+
+fn strSubstring(allocator: Allocator, args: []const Value) InterpreterError!Value {
+    if (args.len != 3) return error.InvalidArgCount;
+
+    const str = switch (args[0].data) {
+        .string => |s| s,
+        else => return error.TypeError,
+    };
+
+    const start = @as(usize, @intCast(args[1].data.integer));
+    const end = @as(usize, @intCast(args[2].data.integer));
+
+    if (start > end or end > str.len) return error.InvalidOperation;
+
+    const result = try allocator.dupe(u8, str[start..end]);
+    return Value{ .data = .{ .string = result }, .allocator = allocator };
+}
+
+fn strReplace(allocator: Allocator, args: []const Value) InterpreterError!Value {
+    if (args.len != 3) return error.InvalidArgCount;
+
+    const str = switch (args[0].data) {
+        .string => |s| s,
+        else => return error.TypeError,
+    };
+    const old = switch (args[1].data) {
+        .string => |s| s,
+        else => return error.TypeError,
+    };
+    const new = switch (args[2].data) {
+        .string => |s| s,
+        else => return error.TypeError,
+    };
+
+    var list = std.ArrayList(u8).init(allocator);
+    errdefer list.deinit();
+
+    var i: usize = 0;
+    while (i < str.len) {
+        if (i + old.len <= str.len and std.mem.eql(u8, str[i .. i + old.len], old)) {
+            try list.appendSlice(new);
+            i += old.len;
+        } else {
+            try list.append(str[i]);
+            i += 1;
+        }
+    }
+
+    return Value{
+        .data = .{ .string = try list.toOwnedSlice() },
+        .allocator = allocator,
+    };
+}
+
+fn strToUpper(allocator: Allocator, args: []const Value) InterpreterError!Value {
+    if (args.len != 1) return error.InvalidArgCount;
+
+    const str = switch (args[0].data) {
+        .string => |s| s,
+        else => return error.TypeError,
+    };
+
+    var result = try allocator.alloc(u8, str.len);
+    errdefer allocator.free(result);
+
+    for (str, 0..) |c, i| {
+        result[i] = std.ascii.toUpper(c);
+    }
+
+    return Value{ .data = .{ .string = result }, .allocator = allocator };
+}
+
+fn strToLower(allocator: Allocator, args: []const Value) InterpreterError!Value {
+    if (args.len != 1) return error.InvalidArgCount;
+
+    const str = switch (args[0].data) {
+        .string => |s| s,
+        else => return error.TypeError,
+    };
+
+    var result = try allocator.alloc(u8, str.len);
+    errdefer allocator.free(result);
+
+    for (str, 0..) |c, i| {
+        result[i] = std.ascii.toLower(c);
+    }
+
+    return Value{ .data = .{ .string = result }, .allocator = allocator };
+}
+
+fn strTrim(allocator: Allocator, args: []const Value) InterpreterError!Value {
+    if (args.len != 1) return error.InvalidArgCount;
+
+    const str = switch (args[0].data) {
+        .string => |s| s,
+        else => return error.TypeError,
+    };
+
+    const trimmed = std.mem.trim(u8, str, " \t\r\n");
+    const result = try allocator.dupe(u8, trimmed);
+
+    return Value{ .data = .{ .string = result }, .allocator = allocator };
 }
 
 // Date functions
@@ -228,6 +334,111 @@ fn listAppend(allocator: Allocator, args: []const Value) InterpreterError!Value 
     return Value{ .data = .{ .list = new_list }, .allocator = allocator };
 }
 
+fn listConcat(allocator: Allocator, args: []const Value) InterpreterError!Value {
+    if (args.len < 1) return error.InvalidArgCount;
+
+    var total_len: usize = 0;
+    for (args) |arg| {
+        const list = switch (arg.data) {
+            .list => |l| l,
+            else => return error.TypeError,
+        };
+        total_len += list.len;
+    }
+
+    var result = try allocator.alloc(Value, total_len);
+    errdefer allocator.free(result);
+
+    var index: usize = 0;
+    for (args) |arg| {
+        const list = arg.data.list;
+        for (list) |item| {
+            result[index] = try item.clone(allocator);
+            index += 1;
+        }
+    }
+
+    return Value{ .data = .{ .list = result }, .allocator = allocator };
+}
+
+fn listSlice(allocator: Allocator, args: []const Value) InterpreterError!Value {
+    if (args.len != 3) return error.InvalidArgCount;
+
+    const list = switch (args[0].data) {
+        .list => |l| l,
+        else => return error.TypeError,
+    };
+
+    const start = @as(usize, @intCast(args[1].data.integer));
+    const end = @as(usize, @intCast(args[2].data.integer));
+
+    if (start > end or end > list.len) return error.InvalidOperation;
+
+    var result = try allocator.alloc(Value, end - start);
+    errdefer allocator.free(result);
+
+    for (list[start..end], 0..) |item, i| {
+        result[i] = try item.clone(allocator);
+    }
+
+    return Value{ .data = .{ .list = result }, .allocator = allocator };
+}
+
+fn listMap(allocator: Allocator, args: []const Value) InterpreterError!Value {
+    if (args.len != 2) return error.InvalidArgCount;
+
+    const list = switch (args[0].data) {
+        .list => |l| l,
+        else => return error.TypeError,
+    };
+
+    const func = switch (args[1].data) {
+        .function => |f| f,
+        else => return error.TypeError,
+    };
+
+    var result = try allocator.alloc(Value, list.len);
+    errdefer allocator.free(result);
+
+    for (list, 0..) |item, i| {
+        const mapped_item = try func(&[_]Value{item});
+        result[i] = mapped_item;
+    }
+
+    return Value{ .data = .{ .list = result }, .allocator = allocator };
+}
+
+fn listFilter(allocator: Allocator, args: []const Value) InterpreterError!Value {
+    if (args.len != 2) return error.InvalidArgCount;
+
+    const list = switch (args[0].data) {
+        .list => |l| l,
+        else => return error.TypeError,
+    };
+
+    const predicate = switch (args[1].data) {
+        .function => |f| f,
+        else => return error.TypeError,
+    };
+
+    var temp_list = std.ArrayList(Value).init(allocator);
+    defer temp_list.deinit();
+
+    for (list) |item| {
+        const result = try predicate(&[_]Value{item});
+        const keep = switch (result.data) {
+            .boolean => |b| b,
+            else => return error.TypeError,
+        };
+        if (keep) {
+            try temp_list.append(try item.clone(allocator));
+        }
+    }
+
+    const result = try temp_list.toOwnedSlice();
+    return Value{ .data = .{ .list = result }, .allocator = allocator };
+}
+
 // Constants
 pub const constants = std.ComptimeStringMap(Value, .{
     .{ "pi", Value{ .data = .{ .float = std.math.pi } } },
@@ -239,13 +450,16 @@ pub const constants = std.ComptimeStringMap(Value, .{
 
 // Function map
 pub const functions = std.ComptimeStringMap(*const fn (Allocator, []const Value) InterpreterError!Value, .{
-    //types
-    .{ "int", builtin_int },
-    .{ "float", builtin_float },
-    .{ "bool", builtin_bool },
-    // .{ "string", builtin_string },
-    // .{ "date", builtin_date },
-    // .{ "list", builtin_list },
+    // core functions
+    .{ "int", coreInt },
+    .{ "float", coreFloat },
+    .{ "bool", coreBool },
+    // .{ "string", coreString },
+    // .{ "date", coreDate },
+    // .{ "list", coreList },
+    // .{ "def", coreDef },
+    //
+
     // math stuff
     .{ "min", min },
     .{ "max", max },
@@ -279,44 +493,87 @@ pub const functions = std.ComptimeStringMap(*const fn (Allocator, []const Value)
     // .{ "variance", variance },
     .{ "str.concat", strConcat },
     .{ "str.length", strLength },
-    //     "str.substring": builtin_substring,
-    //     "str.replace": builtin_replace,
-    //     "str.toUpper": builtin_to_upper,
-    //     "str.toLower": builtin_to_lower,
-    //     "str.trim": builtin_trim,
-    //     "str.split": builtin_split,
-    //     "str.indexOf": builtin_index_of,
-    //     "str.contains": builtin_contains,
-    //     "str.startsWith": builtin_starts_with,
-    //     "str.endsWith": builtin_ends_with,
-    //     "str.regexMatch": builtin_regex_match,
-    //     "str.format": builtin_format,
+    .{ "str.substring", strSubstring },
+    .{ "str.replace", strReplace },
+    .{ "str.toUpper", strToUpper },
+    .{ "str.toLower", strToLower },
+    .{ "str.trim", strTrim },
+    // .{ "str.split", strSplit },
+    // .{ "str.indexOf", strIndexOf },
+    // .{ "str.contains", strContains },
+    // .{ "str.startsWith", strStartsWith },
+    // .{ "str.endsWith", strEndsWith },
+    // .{ "str.regexMatch", strRegexMatch },
+    // .{ "str.format", strFormat },
+
     // date stuff
-    .{ "date.addDays", dateAddDays },
-    //     "date.parse": parse_iso_date,
-    //     "date.format": format_date,
-    //     "date.addDays": add_days,
-    //     "date.addHours": add_hours,
-    //     "date.addMinutes": add_minutes,
-    //     "date.addSeconds": add_seconds,
-    //     "date.dayOfWeek": day_of_week,
-    //     "date.dayOfMonth": day_of_month,
-    //     "date.dayOfYear": day_of_year,
-    //     "date.month": month_of_year,
-    //     "date.year": year_of_date,
-    //     "date.week": week_of_year,
+    // use https://github.com/FObersteiner/zdt for dates, wait for 0.14.0 version of pydust to expose to python
+    // .{ "date.addDays", dateAddDays },
+    // .{ "date.addDays", dateAddDays },
+    // .{ "date.addHours", dateAddHours },
+    // .{ "date.addMinutes", dateAddMinutes },
+    // .{ "date.addSeconds", dateAddSeconds },
+    // .{ "date.dayOfWeek", dateDayOfWeek },
+    // .{ "date.dayOfMonth", dateDayOfMonth },
+    // .{ "date.dayOfYear", dateDayOfYear },
+    // .{ "date.month", dateMonth },
+    // .{ "date.year", dateYear },
+    // .{ "date.week", dateWeek },
+    // .{ "date.add", dateAdd },
+    // .{ "date.sub", dateSub },
+
     // list stuff
     .{ "list.length", listLength },
     .{ "list.append", listAppend },
-    //     "list.concat": concat_lists,
+    .{ "list.concat", listConcat },
     .{ "list.get", listGet },
-    //     "list.put": list_put,
-    //     "list.slice": slice_list,
-    //     "list.map": list_map,
-    //     "list.filter": list_filter,
-    // .{ "apply", apply_function },
+    .{ "list.slice", listSlice },
+    .{ "list.map", listMap },
+    .{ "list.filter", listFilter },
+    // .{ "list.insert", listInsert },
+    // .{ "list.head", listHead },
+    // .{ "list.tail", listTail },
+    // .{ "list.set", listSet },
+    // .{ "list.remove", listRemove },
+    // .{ "list.removeAt", listRemoveAt },
+    // .{ "list.removeRange", listRemoveRange },
+    // .{ "list.removeValue", listRemoveValue },
+    // .{ "list.removeAll", listRemoveAll },
+    // .{ "list.clear", listClear },
+    // .{ "list.sort", listSort },
+    // .{ "list.reverse", listReverse },
+    // .{ "list.shuffle", listShuffle },
+    // .{ "list.unique", listUnique },
+    // .{ "list.contains", listContains },
+    // .{ "list.indexOf", listIndexOf },
+    // .{ "list.lastIndexOf", listLastIndexOf },
+    // .{ "list.find", listFind },
+    // .{ "list.findLast", listFindLast },
+    // .{ "list.findAll", listFindAll },
+    // .{ "list.findLastAll", listFindLastAll },
+    // .{ "list.every", listEvery },
+    // .{ "list.some", listSome },
+    // .{ "list.forEach", listForEach },
+
+    // Functional stuff
+    // .{ "func.apply", funcApply},
+    // .{ "func.bind", funcBind},
+    // .{ "func.curry", funcCurry},
+    // .{ "func.pipe", funcPipe},
+    // .{ "func.compose", funcCompose},
+    // .{ "func.memoize", funcMemoize},
+    // .{ "func.throttle", funcThrottle},
+    // .{ "func.debounce", funcDebounce},
+    // .{ "func.once", funcOnce},
+    // .{ "func.partial", funcPartial},
+    // .{ "func.partialRight", funcPartialRight},
+    // .{ "func.curryRight", funcCurryRight},
+    // .{ "func.curryN", funcCurryN},
+    // .{ "func.curryRightN", funcCurryRightN},
+    // .{ "func.curryN", funcCurryN},
+    // .{ "func.curryRightN", funcCurryRightN},
 });
 
 pub fn get(name: []const u8) ?*const fn (Allocator, []const Value) InterpreterError!Value {
-    return functions.get(name);
+    return functions.get(name) orelse constants.get(name);
 }

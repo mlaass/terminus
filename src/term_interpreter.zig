@@ -49,7 +49,7 @@ pub const Value = struct {
     }
 
     /// Deinitialize the value, freeing any allocated memory.
-    pub fn deinit(self: *Value) void {
+    pub fn deinit(self: *const Value) void {
         if (self.allocator) |allocator| {
             switch (self.data) {
                 .string => |s| allocator.free(s),

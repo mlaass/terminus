@@ -1,8 +1,11 @@
 const std = @import("std");
+const testing = std.testing;
+const builtin_env = @import("builtin_env.zig");
 const Value = @import("term_interpreter.zig").Value;
 const Environment = @import("term_interpreter.zig").Environment;
 const evaluate = @import("term_interpreter.zig").evaluate;
 const parse_to_tree = @import("term_parser.zig").parse_to_tree;
+const InterpreterError = @import("term_interpreter.zig").InterpreterError;
 
 // builtin_env = {
 //     # math
@@ -75,6 +78,47 @@ const parse_to_tree = @import("term_parser.zig").parse_to_tree;
 //     "list.filter": list_filter,
 //     "apply": apply_function,
 // }
+
+fn expectEqualValue(expected: Value, actual: Value) !void {
+    switch (expected.data) {
+        .integer => |i| try testing.expectEqual(i, actual.data.integer),
+        .float => |f| try testing.expectApproxEqAbs(f, actual.data.float, 0.0001),
+        .boolean => |b| try testing.expectEqual(b, actual.data.boolean),
+        .string => |s| try testing.expectEqualStrings(s, actual.data.string),
+        .date => |d| try testing.expectEqualStrings(d, actual.data.date),
+        .list => |l| {
+            const actual_list = actual.data.list;
+            try testing.expectEqual(l.len, actual_list.len);
+            for (l, actual_list) |expected_item, actual_item| {
+                try expectEqualValue(expected_item, actual_item);
+            }
+        },
+        .function => try testing.expectEqual(expected.data.function, actual.data.function),
+    }
+}
+
+// Helper to create test values
+fn str(s: []const u8) Value {
+    return Value{ .data = .{ .string = s } };
+}
+
+fn int(i: i64) Value {
+    return Value{ .data = .{ .integer = i } };
+}
+
+fn float(f: f64) Value {
+    return Value{ .data = .{ .float = f } };
+}
+
+fn boolean(b: bool) Value {
+    return Value{ .data = .{ .boolean = b } };
+}
+
+fn list(allocator: std.mem.Allocator, items: []const Value) !Value {
+    var new_list = try allocator.alloc(Value, items.len);
+    @memcpy(new_list, items);
+    return Value{ .data = .{ .list = new_list }, .allocator = allocator };
+}
 
 test "builtin arithmetic functions" {
     const allocator = std.testing.allocator;
@@ -220,4 +264,318 @@ test "builtin list functions" {
     try std.testing.expectEqual(.{ .integer = 2 }, result_append.data.list[0].data);
     try std.testing.expectEqual(.{ .integer = 3 }, result_append.data.list[1].data);
     try std.testing.expectEqual(.{ .integer = 1 }, result_append.data.list[2].data);
+}
+
+// String function tests
+test "str.concat" {
+    const allocator = testing.allocator;
+
+    // Test basic string concatenation
+    {
+        const args = [_]Value{ str("Hello"), str(" "), str("World") };
+        const result = try builtin_env.functions.get("str.concat").?(allocator, &args);
+        defer result.deinit();
+        try expectEqualValue(str("Hello World"), result);
+    }
+
+    // Test mixed type concatenation
+    {
+        const args = [_]Value{ str("Count: "), int(42), str(", Value: "), float(3.14) };
+        const result = try builtin_env.functions.get("str.concat").?(allocator, &args);
+        defer result.deinit();
+        try expectEqualValue(str("Count: 42, Value: 3.14"), result);
+    }
+
+    // Test empty string
+    {
+        const args = [_]Value{str("")};
+        const result = try builtin_env.functions.get("str.concat").?(allocator, &args);
+        defer result.deinit();
+        try expectEqualValue(str(""), result);
+    }
+}
+
+test "str.length" {
+    const allocator = testing.allocator;
+
+    // Test normal string
+    {
+        const args = [_]Value{str("Hello")};
+        const result = try builtin_env.functions.get("str.length").?(allocator, &args);
+        try expectEqualValue(int(5), result);
+    }
+
+    // Test empty string
+    {
+        const args = [_]Value{str("")};
+        const result = try builtin_env.functions.get("str.length").?(allocator, &args);
+        try expectEqualValue(int(0), result);
+    }
+
+    // Test unicode string
+    {
+        const args = [_]Value{str("Hello 🌍")};
+        const result = try builtin_env.functions.get("str.length").?(allocator, &args);
+        try expectEqualValue(int(8), result); // Note: counts bytes, not graphemes
+    }
+}
+
+test "str.substring" {
+    const allocator = testing.allocator;
+
+    // Test normal substring
+    {
+        const args = [_]Value{ str("Hello World"), int(0), int(5) };
+        var result = try builtin_env.functions.get("str.substring").?(allocator, &args);
+        defer result.deinit();
+        try expectEqualValue(str("Hello"), result);
+    }
+
+    // Test empty substring
+    {
+        const args = [_]Value{ str("Hello"), int(1), int(1) };
+        var result = try builtin_env.functions.get("str.substring").?(allocator, &args);
+        defer result.deinit();
+        try expectEqualValue(str(""), result);
+    }
+
+    // Test error cases
+    {
+        const args = [_]Value{ str("Hello"), int(3), int(1) };
+        try testing.expectError(error.InvalidOperation, builtin_env.functions.get("str.substring").?(allocator, &args));
+    }
+}
+
+test "str.replace" {
+    const allocator = testing.allocator;
+
+    // Test basic replacement
+    {
+        const args = [_]Value{ str("Hello World"), str("World"), str("Zig") };
+        var result = try builtin_env.functions.get("str.replace").?(allocator, &args);
+        defer result.deinit();
+        try expectEqualValue(str("Hello Zig"), result);
+    }
+
+    // Test multiple replacements
+    {
+        const args = [_]Value{ str("ha ha ha"), str("ha"), str("he") };
+        var result = try builtin_env.functions.get("str.replace").?(allocator, &args);
+        defer result.deinit();
+        try expectEqualValue(str("he he he"), result);
+    }
+
+    // Test no matches
+    {
+        const args = [_]Value{ str("Hello"), str("xyz"), str("abc") };
+        var result = try builtin_env.functions.get("str.replace").?(allocator, &args);
+        defer result.deinit();
+        try expectEqualValue(str("Hello"), result);
+    }
+}
+
+test "str.toUpper and str.toLower" {
+    const allocator = testing.allocator;
+
+    // Test toUpper
+    {
+        const args = [_]Value{str("Hello World")};
+        var result = try builtin_env.functions.get("str.toUpper").?(allocator, &args);
+        defer result.deinit();
+        try expectEqualValue(str("HELLO WORLD"), result);
+    }
+
+    // Test toLower
+    {
+        const args = [_]Value{str("Hello World")};
+        var result = try builtin_env.functions.get("str.toLower").?(allocator, &args);
+        defer result.deinit();
+        try expectEqualValue(str("hello world"), result);
+    }
+
+    // Test mixed case
+    {
+        const args = [_]Value{str("hElLo WoRlD")};
+        var upper_result = try builtin_env.functions.get("str.toUpper").?(allocator, &args);
+        defer upper_result.deinit();
+        try expectEqualValue(str("HELLO WORLD"), upper_result);
+
+        var lower_result = try builtin_env.functions.get("str.toLower").?(allocator, &args);
+        defer lower_result.deinit();
+        try expectEqualValue(str("hello world"), lower_result);
+    }
+}
+
+test "str.trim" {
+    const allocator = testing.allocator;
+
+    // Test basic trimming
+    {
+        const args = [_]Value{str("  Hello World  ")};
+        var result = try builtin_env.functions.get("str.trim").?(allocator, &args);
+        defer result.deinit();
+        try expectEqualValue(str("Hello World"), result);
+    }
+
+    // Test already trimmed
+    {
+        const args = [_]Value{str("Hello")};
+        var result = try builtin_env.functions.get("str.trim").?(allocator, &args);
+        defer result.deinit();
+        try expectEqualValue(str("Hello"), result);
+    }
+
+    // Test all whitespace
+    {
+        const args = [_]Value{str("   \t\n\r  ")};
+        var result = try builtin_env.functions.get("str.trim").?(allocator, &args);
+        defer result.deinit();
+        try expectEqualValue(str(""), result);
+    }
+}
+
+test "list.concat" {
+    const allocator = testing.allocator;
+
+    // Test basic concatenation
+    {
+        var list1 = [_]Value{ int(1), int(2) };
+        var list2 = [_]Value{ int(3), int(4) };
+        const args = [_]Value{
+            Value{ .data = .{ .list = &list1 } },
+            Value{ .data = .{ .list = &list2 } },
+        };
+        var result = try builtin_env.functions.get("list.concat").?(allocator, &args);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 4), result.data.list.len);
+        try testing.expectEqual(@as(i64, 1), result.data.list[0].data.integer);
+        try testing.expectEqual(@as(i64, 2), result.data.list[1].data.integer);
+        try testing.expectEqual(@as(i64, 3), result.data.list[2].data.integer);
+        try testing.expectEqual(@as(i64, 4), result.data.list[3].data.integer);
+    }
+
+    // Test empty list concatenation
+    {
+        var empty_list = [_]Value{};
+        var list2 = [_]Value{ int(1), int(2) };
+        const args = [_]Value{
+            Value{ .data = .{ .list = &empty_list } },
+            Value{ .data = .{ .list = &list2 } },
+        };
+        var result = try builtin_env.functions.get("list.concat").?(allocator, &args);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 2), result.data.list.len);
+        try testing.expectEqual(@as(i64, 1), result.data.list[0].data.integer);
+        try testing.expectEqual(@as(i64, 2), result.data.list[1].data.integer);
+    }
+}
+
+test "list.slice" {
+    const allocator = testing.allocator;
+
+    // Test normal slice
+    {
+        var test_list = [_]Value{ int(1), int(2), int(3), int(4), int(5) };
+        const args = [_]Value{
+            Value{ .data = .{ .list = &test_list } },
+            int(1),
+            int(4),
+        };
+        var result = try builtin_env.functions.get("list.slice").?(allocator, &args);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 3), result.data.list.len);
+        try testing.expectEqual(@as(i64, 2), result.data.list[0].data.integer);
+        try testing.expectEqual(@as(i64, 3), result.data.list[1].data.integer);
+        try testing.expectEqual(@as(i64, 4), result.data.list[2].data.integer);
+    }
+
+    // Test empty slice
+    {
+        var test_list = [_]Value{ int(1), int(2), int(3) };
+        const args = [_]Value{
+            Value{ .data = .{ .list = &test_list } },
+            int(1),
+            int(1),
+        };
+        var result = try builtin_env.functions.get("list.slice").?(allocator, &args);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 0), result.data.list.len);
+    }
+
+    // Test error cases
+    {
+        var test_list = [_]Value{ int(1), int(2), int(3) };
+        const args = [_]Value{
+            Value{ .data = .{ .list = &test_list } },
+            int(2),
+            int(1),
+        };
+        try testing.expectError(error.InvalidOperation, builtin_env.functions.get("list.slice").?(allocator, &args));
+    }
+}
+
+test "list.map" {
+    const allocator = testing.allocator;
+
+    // Helper function to double a number
+    const double = struct {
+        fn func(args: []const Value) InterpreterError!Value {
+            if (args.len != 1) return error.InvalidArgCount;
+            return switch (args[0].data) {
+                .integer => |i| Value{ .data = .{ .integer = i * 2 } },
+                else => error.TypeError,
+            };
+        }
+    }.func;
+
+    // Test mapping over integers
+    {
+        var test_list = [_]Value{ int(1), int(2), int(3) };
+        const args = [_]Value{
+            Value{ .data = .{ .list = &test_list } },
+            Value{ .data = .{ .function = double } },
+        };
+        var result = try builtin_env.functions.get("list.map").?(allocator, &args);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 3), result.data.list.len);
+        try testing.expectEqual(@as(i64, 2), result.data.list[0].data.integer);
+        try testing.expectEqual(@as(i64, 4), result.data.list[1].data.integer);
+        try testing.expectEqual(@as(i64, 6), result.data.list[2].data.integer);
+    }
+}
+
+test "list.filter" {
+    const allocator = testing.allocator;
+
+    // Helper function to check if a number is even
+    const is_even = struct {
+        fn func(args: []const Value) InterpreterError!Value {
+            if (args.len != 1) return error.InvalidArgCount;
+            return switch (args[0].data) {
+                .integer => |i| Value{ .data = .{ .boolean = @rem(i, 2) == 0 } },
+                else => error.TypeError,
+            };
+        }
+    }.func;
+
+    // Test filtering integers
+    {
+        var test_list = [_]Value{ int(1), int(2), int(3), int(4), int(5), int(6) };
+        const args = [_]Value{
+            Value{ .data = .{ .list = &test_list } },
+            Value{ .data = .{ .function = is_even } },
+        };
+        var result = try builtin_env.functions.get("list.filter").?(allocator, &args);
+        defer result.deinit();
+
+        try testing.expectEqual(@as(usize, 3), result.data.list.len);
+        try testing.expectEqual(@as(i64, 2), result.data.list[0].data.integer);
+        try testing.expectEqual(@as(i64, 4), result.data.list[1].data.integer);
+        try testing.expectEqual(@as(i64, 6), result.data.list[2].data.integer);
+    }
 }
