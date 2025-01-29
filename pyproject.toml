@@ -5,7 +5,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry]
 name = "termynus"
 version = "0.1.0"
-description = "Terminal utilities implemented in Zig"
+description = "Term parsing and evaluation in Zig"
 authors = ["Your Name <your.email@example.com>"]
 readme = "README.md"
 packages = [{ include = "termynus" }]
@@ -37,12 +37,10 @@ select = ["F", "E", "W", "UP", "I001", "I002"]
 [tool.poetry.scripts]
 generate-stubs = "scripts.generate_stubs:main"
 
-
 [tool.pydust]
 build_zig= "build_pydust.zig"
-
     [[tool.pydust.ext_module]]
     name = "termynus._lib"
-    root = "src/term.zig"
+    root = "src/term_lib.zig"
 
 

@@ -13,7 +13,7 @@ pub fn build(b: *std.Build) void {
 
     _ = pydust.addPythonModule(.{
         .name = "termynus._lib",
-        .root_source_file = .{ .path = "src/term.zig" },
+        .root_source_file = .{ .path = "src/term_lib.zig" },
         .limited_api = true,
         .target = target,
         .optimize = optimize,
