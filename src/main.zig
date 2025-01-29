@@ -20,7 +20,7 @@ fn printNode(node: Node) void {
     }
 }
 
-fn printNodeTree(node: *const Node, depth: usize) void {
+pub fn printNodeTree(node: *const Node, depth: usize) void {
     // Print indentation
     for (0..depth) |_| {
         std.debug.print("  ", .{});

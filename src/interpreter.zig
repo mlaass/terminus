@@ -4,7 +4,7 @@ const parse_to_tree = @import("parser.zig").parse_to_tree;
 const Allocator = std.mem.Allocator;
 const builtin = @import("interpreter_builtin.zig");
 const Environment = @import("interpreter_environment.zig").Environment;
-
+const printNodeTree = @import("main.zig").printNodeTree;
 pub const Value = struct {
     data: union(enum) {
         integer: i64,
@@ -15,7 +15,7 @@ pub const Value = struct {
         list: []Value,
         function: *const fn (args: []const Value) InterpreterError!Value,
         function_def: struct {
-            node: *const Node,
+            node: Node,
             arg_names: []const Value,
         },
     },
@@ -186,11 +186,19 @@ fn evaluateFunction(allocator: Allocator, node: *const Node, env: *Environment) 
         var stack_env = Environment.init(allocator, env);
         defer stack_env.deinit();
         if (func_node.arg_names.len != args.len) return error.InvalidArgCount;
-        std.debug.print("func_node.arg_names: {any}\n", .{func_node.arg_names});
+        std.debug.print("func_node {s} \n", .{node.value.function.name});
         for (0..func_node.arg_names.len) |i| {
+            std.debug.print("func_node.arg_name: {s} = {any}\n", .{ func_node.arg_names[i].data.string, args[i] });
             try stack_env.put(func_node.arg_names[i].data.string, args[i]);
         }
-        return evaluate(allocator, func_node.node, &stack_env);
+        std.debug.print("func_node Tree:\n", .{});
+        printNodeTree(&func_node.node, 0);
+        std.debug.print("func_node.node: {any}\n", .{func_node.node});
+
+        var result = evaluate(allocator, &func_node.node, &stack_env);
+
+        std.debug.print("result: {any}\n", .{result});
+        return result;
     } else {
         if (builtin.env_functions.get(node.value.function.name)) |func| {
             const func_result = try func(allocator, args, env);

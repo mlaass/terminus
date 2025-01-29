@@ -5,7 +5,7 @@ const Environment = @import("interpreter_environment.zig").Environment;
 const Allocator = std.mem.Allocator;
 const calcUtf16LeLen = @import("std").unicode.calcUtf16LeLen;
 const parse_to_tree = @import("parser.zig").parse_to_tree;
-
+const printNodeTree = @import("main.zig").printNodeTree;
 // Helper function to convert Value to f64
 fn valueToFloat(value: Value) InterpreterError!f64 {
     return switch (value.data) {
@@ -458,8 +458,10 @@ fn coreDef(allocator: Allocator, args: []const Value, env: *Environment) Interpr
     }
 
     const func_def = parse_to_tree(allocator, args[2].data.string) catch return error.InvalidOperation;
+    printNodeTree(&func_def.root, 0);
+
     try env.put(name, Value{ .data = .{ .function_def = .{
-        .node = &func_def.root,
+        .node = func_def.root,
         .arg_names = cloned_args,
     } } });
     return Value{ .data = .{ .boolean = true } };
