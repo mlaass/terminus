@@ -2,7 +2,6 @@ const std = @import("std");
 const parse_to_tree = @import("term_parser.zig").parse_to_tree;
 const evaluate = @import("term_interpreter.zig").evaluate;
 const Environment = @import("term_interpreter.zig").Environment;
-const deinitValue = @import("term_interpreter.zig").deinitValue;
 const tokenize = @import("term_parser.zig").tokenize;
 const shunting_yard = @import("term_parser.zig").shunting_yard;
 const Node = @import("term_parser.zig").Node;
@@ -135,12 +134,12 @@ pub fn main() !void {
         std.debug.print("\n", .{});
     }
 
-    const result = try evaluate(allocator, &tree.root, &env);
-    defer deinitValue(allocator, result);
+    var result = try evaluate(allocator, &tree.root, &env);
+    defer result.deinit();
 
     // Always print the result
     std.debug.print("Result: ", .{});
-    switch (result) {
+    switch (result.data) {
         .integer => |v| std.debug.print("{d}\n", .{v}),
         .float => |v| std.debug.print("{d}\n", .{v}),
         .boolean => |v| std.debug.print("{}\n", .{v}),
@@ -149,7 +148,7 @@ pub fn main() !void {
         .list => |v| {
             std.debug.print("[", .{});
             for (v, 0..) |item, i| {
-                switch (item) {
+                switch (item.data) {
                     .integer => |n| std.debug.print("{d}", .{n}),
                     .float => |n| std.debug.print("{d}", .{n}),
                     .boolean => |b| std.debug.print("{}", .{b}),

@@ -4,14 +4,66 @@ const parse_to_tree = @import("term_parser.zig").parse_to_tree;
 const Allocator = std.mem.Allocator;
 const builtin_env = @import("builtin_env.zig"); // Assume this contains your built-in functions
 
-pub const Value = union(enum) {
-    integer: i64,
-    float: f64,
-    boolean: bool,
-    string: []const u8,
-    date: []const u8,
-    list: []Value,
-    function: *const fn (args: []const Value) InterpreterError!Value,
+pub const Value = struct {
+    data: union(enum) {
+        integer: i64,
+        float: f64,
+        boolean: bool,
+        string: []const u8,
+        date: []const u8,
+        list: []Value,
+        function: *const fn (args: []const Value) InterpreterError!Value,
+    },
+
+    allocator: ?Allocator = null, // Track the allocator for owned memory
+
+    /// Clone a value, making deep copies of any owned memory
+    pub fn clone(self: Value, allocator: Allocator) !Value {
+        return switch (self.data) {
+            .integer => |i| Value{ .data = .{ .integer = i } },
+            .float => |f| Value{ .data = .{ .float = f } },
+            .boolean => |b| Value{ .data = .{ .boolean = b } },
+            .string => |s| Value{
+                .data = .{ .string = try allocator.dupe(u8, s) },
+                .allocator = allocator,
+            },
+            .date => |d| Value{
+                .data = .{ .date = try allocator.dupe(u8, d) },
+                .allocator = allocator,
+            },
+            .list => |list| {
+                var new_list = try allocator.alloc(Value, list.len);
+                errdefer allocator.free(new_list);
+
+                for (list, 0..) |item, i| {
+                    new_list[i] = try item.clone(allocator);
+                }
+
+                return Value{
+                    .data = .{ .list = new_list },
+                    .allocator = allocator,
+                };
+            },
+            .function => |f| Value{ .data = .{ .function = f } },
+        };
+    }
+
+    /// Deinitialize the value, freeing any allocated memory.
+    pub fn deinit(self: *Value) void {
+        if (self.allocator) |allocator| {
+            switch (self.data) {
+                .string => |s| allocator.free(s),
+                .date => |d| allocator.free(d),
+                .list => |list| {
+                    for (list) |*item| {
+                        item.deinit();
+                    }
+                    allocator.free(list);
+                },
+                else => {}, // No cleanup needed for other types
+            }
+        }
+    }
 };
 
 pub const InterpreterError = error{
@@ -57,10 +109,10 @@ pub const CompareOp = enum { gt, lt, eq, neq, gte, lte };
 
 pub fn evaluate(allocator: Allocator, node: *const Node, env: *Environment) InterpreterError!Value {
     return switch (node.type) {
-        .literal_integer => Value{ .integer = node.value.integer },
-        .literal_float => Value{ .float = node.value.float },
-        .literal_string => Value{ .string = node.value.string },
-        .literal_date => Value{ .date = node.value.date },
+        .literal_integer => Value{ .data = .{ .integer = node.value.integer }, .allocator = null },
+        .literal_float => Value{ .data = .{ .float = node.value.float }, .allocator = null },
+        .literal_string => Value{ .data = .{ .string = node.value.string }, .allocator = null },
+        .literal_date => Value{ .data = .{ .date = node.value.date }, .allocator = null },
         .identifier => env.get(node.value.identifier) orelse return error.UndefinedIdentifier,
         .binary_operator => try evaluateBinaryOperator(allocator, node, env),
         .unary_operator => try evaluateUnaryOperator(allocator, node, env),
@@ -135,8 +187,8 @@ fn evaluateUnaryOperator(allocator: Allocator, node: *const Node, env: *Environm
 fn evaluateFunction(allocator: Allocator, node: *const Node, env: *Environment) InterpreterError!Value {
     var args = try allocator.alloc(Value, node.value.function.arg_count);
     defer {
-        for (args) |arg| {
-            deinitValue(allocator, arg);
+        for (args) |*arg| {
+            arg.deinit();
         }
         allocator.free(args);
     }
@@ -145,9 +197,10 @@ fn evaluateFunction(allocator: Allocator, node: *const Node, env: *Environment) 
         args[i] = try evaluate(allocator, &node.args.?[i], env);
     }
 
-    // TODO: get the function from env not builtin_env
+    // TODO: get the function from env first and then builtin_env
     const func = builtin_env.get(node.value.function.name) orelse return error.UndefinedIdentifier;
-    const func_result = try func(args);
+
+    const func_result = try func(allocator, args);
 
     return func_result;
 }
@@ -156,44 +209,47 @@ fn evaluateList(allocator: Allocator, node: *const Node, env: *Environment) Inte
     if (node.args == null) return error.InvalidArgCount;
 
     const elements = try allocator.alloc(Value, node.value.list.element_count);
-    errdefer {
-        for (elements) |element| {
-            deinitValue(allocator, element);
-        }
-        allocator.free(elements);
-    }
+    errdefer allocator.free(elements);
 
     for (0..node.value.list.element_count) |i| {
         elements[i] = try evaluate(allocator, &node.args.?[i], env);
     }
 
-    return Value{ .list = elements };
+    return Value{
+        .data = .{ .list = elements },
+        .allocator = allocator,
+    };
 }
 
-// Add this function to help manage list memory
-pub fn deinitValue(allocator: Allocator, value: Value) void {
-    switch (value) {
-        .list => |list| {
-            for (list) |element| {
-                deinitValue(allocator, element);
-            }
-            allocator.free(list);
-        },
-        else => {}, // Other value types don't need cleanup
+fn evaluateString(allocator: Allocator, node: *const Node, _: *Environment) InterpreterError!Value {
+    if (node.type == .literal_string) {
+        const str = try allocator.dupe(u8, node.value.string);
+        return Value{
+            .data = .{ .string = str },
+            .allocator = allocator,
+        };
     }
+    if (node.type == .literal_date) {
+        const date_str = try allocator.dupe(u8, node.value.date);
+        return Value{
+            .data = .{ .date = date_str },
+            .allocator = allocator,
+        };
+    }
+    return error.InvalidOperation;
 }
 
 // Helper functions for operations
 fn addValues(left: Value, right: Value) InterpreterError!Value {
-    return switch (left) {
-        .integer => |l| switch (right) {
-            .integer => |r| Value{ .integer = l + r },
-            .float => |r| Value{ .float = @as(f64, @floatFromInt(l)) + r },
+    return switch (left.data) {
+        .integer => |l| switch (right.data) {
+            .integer => |r| Value{ .data = .{ .integer = l + r } },
+            .float => |r| Value{ .data = .{ .float = @as(f64, @floatFromInt(l)) + r } },
             else => return error.TypeError,
         },
-        .float => |l| switch (right) {
-            .integer => |r| Value{ .float = l + @as(f64, @floatFromInt(r)) },
-            .float => |r| Value{ .float = l + r },
+        .float => |l| switch (right.data) {
+            .integer => |r| Value{ .data = .{ .float = l + @as(f64, @floatFromInt(r)) } },
+            .float => |r| Value{ .data = .{ .float = l + r } },
             else => return error.TypeError,
         },
         else => return error.TypeError,
@@ -201,15 +257,15 @@ fn addValues(left: Value, right: Value) InterpreterError!Value {
 }
 
 fn subtractValues(left: Value, right: Value) InterpreterError!Value {
-    return switch (left) {
-        .integer => |l| switch (right) {
-            .integer => |r| Value{ .integer = l - r },
-            .float => |r| Value{ .float = @as(f64, @floatFromInt(l)) - r },
+    return switch (left.data) {
+        .integer => |l| switch (right.data) {
+            .integer => |r| Value{ .data = .{ .integer = l - r } },
+            .float => |r| Value{ .data = .{ .float = @as(f64, @floatFromInt(l)) - r } },
             else => error.TypeError,
         },
-        .float => |l| switch (right) {
-            .integer => |r| Value{ .float = l - @as(f64, @floatFromInt(r)) },
-            .float => |r| Value{ .float = l - r },
+        .float => |l| switch (right.data) {
+            .integer => |r| Value{ .data = .{ .float = l - @as(f64, @floatFromInt(r)) } },
+            .float => |r| Value{ .data = .{ .float = l - r } },
             else => error.TypeError,
         },
         else => error.TypeError,
@@ -217,15 +273,15 @@ fn subtractValues(left: Value, right: Value) InterpreterError!Value {
 }
 
 fn multiplyValues(left: Value, right: Value) InterpreterError!Value {
-    return switch (left) {
-        .integer => |l| switch (right) {
-            .integer => |r| Value{ .integer = l * r },
-            .float => |r| Value{ .float = @as(f64, @floatFromInt(l)) * r },
+    return switch (left.data) {
+        .integer => |l| switch (right.data) {
+            .integer => |r| Value{ .data = .{ .integer = l * r } },
+            .float => |r| Value{ .data = .{ .float = @as(f64, @floatFromInt(l)) * r } },
             else => error.TypeError,
         },
-        .float => |l| switch (right) {
-            .integer => |r| Value{ .float = l * @as(f64, @floatFromInt(r)) },
-            .float => |r| Value{ .float = l * r },
+        .float => |l| switch (right.data) {
+            .integer => |r| Value{ .data = .{ .float = l * @as(f64, @floatFromInt(r)) } },
+            .float => |r| Value{ .data = .{ .float = l * r } },
             else => error.TypeError,
         },
         else => error.TypeError,
@@ -233,15 +289,15 @@ fn multiplyValues(left: Value, right: Value) InterpreterError!Value {
 }
 
 fn divideValues(left: Value, right: Value) InterpreterError!Value {
-    return switch (right) {
-        .integer => |r| if (r == 0) error.DivisionByZero else switch (left) {
-            .integer => |l| Value{ .integer = @divTrunc(l, r) },
-            .float => |l| Value{ .float = l / @as(f64, @floatFromInt(r)) },
+    return switch (right.data) {
+        .integer => |r| if (r == 0) error.DivisionByZero else switch (left.data) {
+            .integer => |l| Value{ .data = .{ .integer = @divTrunc(l, r) } },
+            .float => |l| Value{ .data = .{ .float = l / @as(f64, @floatFromInt(r)) } },
             else => error.TypeError,
         },
-        .float => |r| if (r == 0.0) error.DivisionByZero else switch (left) {
-            .integer => |l| Value{ .float = @as(f64, @floatFromInt(l)) / r },
-            .float => |l| Value{ .float = l / r },
+        .float => |r| if (r == 0.0) error.DivisionByZero else switch (left.data) {
+            .integer => |l| Value{ .data = .{ .float = @as(f64, @floatFromInt(l)) / r } },
+            .float => |l| Value{ .data = .{ .float = l / r } },
             else => error.TypeError,
         },
         else => error.TypeError,
@@ -274,16 +330,16 @@ fn compareValues(left: Value, right: Value, op: CompareOp) InterpreterError!Valu
         }
     };
 
-    return switch (left) {
-        .integer => |i| Value{ .boolean = Compare.nums(@as(f64, @floatFromInt(i)), try valueToFloat(right), op) },
-        .float => |f| Value{ .boolean = Compare.nums(f, try valueToFloat(right), op) },
-        .boolean => |b| Value{ .boolean = Compare.nums(if (b) 1 else 0, try valueToFloat(right), op) },
-        .string => |s1| switch (right) {
-            .string => |s2| Value{ .boolean = Compare.strings(s1, s2, op) },
+    return switch (left.data) {
+        .integer => |i| Value{ .data = .{ .boolean = Compare.nums(@as(f64, @floatFromInt(i)), try valueToFloat(right), op) } },
+        .float => |f| Value{ .data = .{ .boolean = Compare.nums(f, try valueToFloat(right), op) } },
+        .boolean => |b| Value{ .data = .{ .boolean = Compare.nums(if (b) 1 else 0, try valueToFloat(right), op) } },
+        .string => |s1| switch (right.data) {
+            .string => |s2| Value{ .data = .{ .boolean = Compare.strings(s1, s2, op) } },
             else => return error.TypeError,
         },
-        .date => |d1| switch (right) {
-            .date => |d2| Value{ .boolean = Compare.strings(d1, d2, op) },
+        .date => |d1| switch (right.data) {
+            .date => |d2| Value{ .data = .{ .boolean = Compare.strings(d1, d2, op) } },
             else => return error.TypeError,
         },
         else => return error.TypeError,
@@ -292,7 +348,7 @@ fn compareValues(left: Value, right: Value, op: CompareOp) InterpreterError!Valu
 
 // Helper function to convert Value to f64
 fn valueToFloat(value: Value) InterpreterError!f64 {
-    return switch (value) {
+    return switch (value.data) {
         .integer => |i| @as(f64, @floatFromInt(i)),
         .float => |f| f,
         .boolean => |b| if (b) 1 else 0,
@@ -301,36 +357,36 @@ fn valueToFloat(value: Value) InterpreterError!f64 {
 }
 
 fn negateValue(value: Value) InterpreterError!Value {
-    return switch (value) {
-        .integer => |v| Value{ .integer = -v },
-        .float => |v| Value{ .float = -v },
-        .boolean => |v| Value{ .boolean = !v },
+    return switch (value.data) {
+        .integer => |v| Value{ .data = .{ .integer = -v } },
+        .float => |v| Value{ .data = .{ .float = -v } },
+        .boolean => |v| Value{ .data = .{ .boolean = !v } },
         else => return error.TypeError,
     };
 }
 
 fn notValue(value: Value) InterpreterError!Value {
-    return switch (value) {
-        .integer => |v| Value{ .boolean = v == 0 },
-        .float => |v| Value{ .boolean = v == 0.0 },
-        .boolean => |v| Value{ .boolean = !v },
+    return switch (value.data) {
+        .integer => |v| Value{ .data = .{ .boolean = v == 0 } },
+        .float => |v| Value{ .data = .{ .boolean = v == 0.0 } },
+        .boolean => |v| Value{ .data = .{ .boolean = !v } },
         else => return error.TypeError,
     };
 }
 
 fn powerValues(left: Value, right: Value) InterpreterError!Value {
-    return switch (left) {
-        .integer => |l| switch (right) {
+    return switch (left.data) {
+        .integer => |l| switch (right.data) {
             .integer => |r| if (r >= 0)
-                Value{ .integer = std.math.pow(i64, l, @as(u6, @intCast(@min(@as(u64, @intCast(r)), 63)))) }
+                Value{ .data = .{ .integer = std.math.pow(i64, l, @as(u6, @intCast(@min(@as(u64, @intCast(r)), 63)))) } }
             else
-                Value{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), @as(f64, @floatFromInt(r))) },
-            .float => |r| Value{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), r) },
+                Value{ .data = .{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), @as(f64, @floatFromInt(r))) } },
+            .float => |r| Value{ .data = .{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), r) } },
             else => error.TypeError,
         },
-        .float => |l| switch (right) {
-            .integer => |r| Value{ .float = std.math.pow(f64, l, @as(f64, @floatFromInt(r))) },
-            .float => |r| Value{ .float = std.math.pow(f64, l, r) },
+        .float => |l| switch (right.data) {
+            .integer => |r| Value{ .data = .{ .float = std.math.pow(f64, l, @as(f64, @floatFromInt(r))) } },
+            .float => |r| Value{ .data = .{ .float = std.math.pow(f64, l, r) } },
             else => error.TypeError,
         },
         else => error.TypeError,
@@ -338,12 +394,12 @@ fn powerValues(left: Value, right: Value) InterpreterError!Value {
 }
 
 fn floorDivValues(left: Value, right: Value) InterpreterError!Value {
-    return switch (left) {
-        .integer => |l| switch (right) {
+    return switch (left.data) {
+        .integer => |l| switch (right.data) {
             .integer => |r| if (r == 0)
                 error.DivisionByZero
             else
-                Value{ .integer = @divFloor(l, r) },
+                Value{ .data = .{ .integer = @divFloor(l, r) } },
             else => error.TypeError,
         },
         else => error.TypeError,
@@ -351,12 +407,12 @@ fn floorDivValues(left: Value, right: Value) InterpreterError!Value {
 }
 
 fn moduloValues(left: Value, right: Value) InterpreterError!Value {
-    return switch (left) {
-        .integer => |l| switch (right) {
+    return switch (left.data) {
+        .integer => |l| switch (right.data) {
             .integer => |r| if (r == 0)
                 error.DivisionByZero
             else
-                Value{ .integer = @mod(l, r) },
+                Value{ .data = .{ .integer = @mod(l, r) } },
             else => error.TypeError,
         },
         else => error.TypeError,
@@ -364,9 +420,9 @@ fn moduloValues(left: Value, right: Value) InterpreterError!Value {
 }
 
 fn logicalAndValues(left: Value, right: Value) InterpreterError!Value {
-    return switch (left) {
-        .boolean => |l| switch (right) {
-            .boolean => |r| Value{ .boolean = l and r },
+    return switch (left.data) {
+        .boolean => |l| switch (right.data) {
+            .boolean => |r| Value{ .data = .{ .boolean = l and r } },
             else => error.TypeError,
         },
         else => error.TypeError,
@@ -374,9 +430,9 @@ fn logicalAndValues(left: Value, right: Value) InterpreterError!Value {
 }
 
 fn logicalOrValues(left: Value, right: Value) InterpreterError!Value {
-    return switch (left) {
-        .boolean => |l| switch (right) {
-            .boolean => |r| Value{ .boolean = l or r },
+    return switch (left.data) {
+        .boolean => |l| switch (right.data) {
+            .boolean => |r| Value{ .data = .{ .boolean = l or r } },
             else => error.TypeError,
         },
         else => error.TypeError,
@@ -384,9 +440,9 @@ fn logicalOrValues(left: Value, right: Value) InterpreterError!Value {
 }
 
 fn bitwiseAndValues(left: Value, right: Value) InterpreterError!Value {
-    return switch (left) {
-        .integer => |l| switch (right) {
-            .integer => |r| Value{ .integer = l & r },
+    return switch (left.data) {
+        .integer => |l| switch (right.data) {
+            .integer => |r| Value{ .data = .{ .integer = l & r } },
             else => error.TypeError,
         },
         else => error.TypeError,
@@ -394,9 +450,9 @@ fn bitwiseAndValues(left: Value, right: Value) InterpreterError!Value {
 }
 
 fn bitwiseOrValues(left: Value, right: Value) InterpreterError!Value {
-    return switch (left) {
-        .integer => |l| switch (right) {
-            .integer => |r| Value{ .integer = l | r },
+    return switch (left.data) {
+        .integer => |l| switch (right.data) {
+            .integer => |r| Value{ .data = .{ .integer = l | r } },
             else => error.TypeError,
         },
         else => error.TypeError,
@@ -404,9 +460,9 @@ fn bitwiseOrValues(left: Value, right: Value) InterpreterError!Value {
 }
 
 fn bitwiseXorValues(left: Value, right: Value) InterpreterError!Value {
-    return switch (left) {
-        .integer => |l| switch (right) {
-            .integer => |r| Value{ .integer = l ^ r },
+    return switch (left.data) {
+        .integer => |l| switch (right.data) {
+            .integer => |r| Value{ .data = .{ .integer = l ^ r } },
             else => error.TypeError,
         },
         else => error.TypeError,
@@ -414,10 +470,10 @@ fn bitwiseXorValues(left: Value, right: Value) InterpreterError!Value {
 }
 
 fn bitShiftLeftValues(left: Value, right: Value) InterpreterError!Value {
-    return switch (left) {
-        .integer => |l| switch (right) {
+    return switch (left.data) {
+        .integer => |l| switch (right.data) {
             .integer => |r| if (r >= 0)
-                Value{ .integer = l << @intCast(@min(@as(u64, @intCast(r)), 63)) }
+                Value{ .data = .{ .integer = l << @intCast(@min(@as(u64, @intCast(r)), 63)) } }
             else
                 error.InvalidOperation,
             else => error.TypeError,
@@ -427,10 +483,10 @@ fn bitShiftLeftValues(left: Value, right: Value) InterpreterError!Value {
 }
 
 fn bitShiftRightValues(left: Value, right: Value) InterpreterError!Value {
-    return switch (left) {
-        .integer => |l| switch (right) {
+    return switch (left.data) {
+        .integer => |l| switch (right.data) {
             .integer => |r| if (r >= 0)
-                Value{ .integer = l >> @intCast(@min(@as(u64, @intCast(r)), 63)) }
+                Value{ .data = .{ .integer = l >> @intCast(@min(@as(u64, @intCast(r)), 63)) } }
             else
                 error.InvalidOperation,
             else => error.TypeError,

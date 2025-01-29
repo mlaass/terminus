@@ -697,7 +697,7 @@ pub fn parse_to_tree(allocator: std.mem.Allocator, expression: []const u8) !Pars
             },
             .function => {
                 const arg_count = node.value.function.arg_count;
-                std.debug.print("arg_count: {}\n", .{arg_count});
+                // std.debug.print("arg_count: {}\n", .{arg_count});
                 if (stack.items.len < arg_count) return error.InvalidExpression;
 
                 var new_node = try cloneNode(allocator, node);

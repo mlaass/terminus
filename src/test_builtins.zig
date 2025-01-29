@@ -85,19 +85,19 @@ test "builtin arithmetic functions" {
     var tree_add = try parse_to_tree(allocator, "min(5, 3)");
     defer tree_add.deinit(allocator);
     var result = try evaluate(allocator, &tree_add.root, &env);
-    try std.testing.expectEqual(Value{ .integer = 3 }, result);
+    try std.testing.expectEqual(.{ .integer = 3 }, result.data);
 
     // Test mixed types
     var tree_add_float = try parse_to_tree(allocator, "max(5.14, 3)");
     defer tree_add_float.deinit(allocator);
     result = try evaluate(allocator, &tree_add_float.root, &env);
-    try std.testing.expectEqual(Value{ .float = 5.14 }, result);
+    try std.testing.expectEqual(.{ .float = 5.14 }, result.data);
 
     // Test nested arithmetic
     var tree_mul = try parse_to_tree(allocator, "min(max(2, 3), mean(10, 5))");
     defer tree_mul.deinit(allocator);
     result = try evaluate(allocator, &tree_mul.root, &env);
-    try std.testing.expectEqual(Value{ .integer = 3 }, result);
+    try std.testing.expectEqual(.{ .integer = 3 }, result.data);
 }
 
 test "builtin math functions" {
@@ -109,25 +109,25 @@ test "builtin math functions" {
     var tree_abs = try parse_to_tree(allocator, "abs(-42)");
     defer tree_abs.deinit(allocator);
     var result = try evaluate(allocator, &tree_abs.root, &env);
-    try std.testing.expectEqual(Value{ .integer = 42 }, result);
+    try std.testing.expectEqual(.{ .integer = 42 }, result.data);
 
     // Test floor
     var tree_floor = try parse_to_tree(allocator, "floor(3.7)");
     defer tree_floor.deinit(allocator);
     result = try evaluate(allocator, &tree_floor.root, &env);
-    try std.testing.expectEqual(Value{ .float = 3.0 }, result);
+    try std.testing.expectEqual(.{ .float = 3.0 }, result.data);
 
     // Test ceil
     var tree_ceil = try parse_to_tree(allocator, "ceil(3.2)");
     defer tree_ceil.deinit(allocator);
     result = try evaluate(allocator, &tree_ceil.root, &env);
-    try std.testing.expectEqual(Value{ .float = 4.0 }, result);
+    try std.testing.expectEqual(.{ .float = 4.0 }, result.data);
 
     // Test complex expression
     var tree_add = try parse_to_tree(allocator, "floor(3.7) + ceil(2.2)");
     defer tree_add.deinit(allocator);
     result = try evaluate(allocator, &tree_add.root, &env);
-    try std.testing.expectEqual(Value{ .float = 6.0 }, result);
+    try std.testing.expectEqual(.{ .float = 6.0 }, result.data);
 }
 
 test "builtin type conversion functions" {
@@ -139,24 +139,24 @@ test "builtin type conversion functions" {
     var tree = try parse_to_tree(allocator, "int(3.7)");
     defer tree.deinit(allocator);
     var result = try evaluate(allocator, &tree.root, &env);
-    try std.testing.expectEqual(Value{ .integer = 3 }, result);
+    try std.testing.expectEqual(.{ .integer = 3 }, result.data);
 
     // Test float conversion
     var tree_float = try parse_to_tree(allocator, "float(42)");
     defer tree_float.deinit(allocator);
     result = try evaluate(allocator, &tree_float.root, &env);
-    try std.testing.expectEqual(Value{ .float = 42.0 }, result);
+    try std.testing.expectEqual(.{ .float = 42.0 }, result.data);
 
     // Test bool conversion
     var tree_bool = try parse_to_tree(allocator, "bool(1)");
     defer tree_bool.deinit(allocator);
     result = try evaluate(allocator, &tree_bool.root, &env);
-    try std.testing.expectEqual(Value{ .boolean = true }, result);
+    try std.testing.expectEqual(.{ .boolean = true }, result.data);
 
     var tree_bool_false = try parse_to_tree(allocator, "bool(0)");
     defer tree_bool_false.deinit(allocator);
     result = try evaluate(allocator, &tree_bool_false.root, &env);
-    try std.testing.expectEqual(Value{ .boolean = false }, result);
+    try std.testing.expectEqual(.{ .boolean = false }, result.data);
 }
 
 test "builtin function error cases" {
@@ -186,26 +186,38 @@ test "builtin list functions" {
     defer env.deinit();
 
     // Test list creation and access
-    var tree_get1 = try parse_to_tree(allocator, "list.get(1,[1, 2, 3])");
+    var tree_get1 = try parse_to_tree(allocator, "list.get([1, 2, 3], 1)");
     defer tree_get1.deinit(allocator);
     var result = try evaluate(allocator, &tree_get1.root, &env);
-    std.debug.print("result: {any}\n", .{result});
-    try std.testing.expectEqual(Value{ .integer = 2 }, result);
+    std.debug.print("result: {any}\n", .{result.data});
+    try std.testing.expectEqual(.{ .integer = 2 }, result.data);
 
     // Test list length
     var tree_length = try parse_to_tree(allocator, "list.length([1, 2, 3])");
     defer tree_length.deinit(allocator);
-    result = try evaluate(allocator, &tree_length.root, &env);
-    try std.testing.expectEqual(Value{ .integer = 3 }, result);
+    var result_length = try evaluate(allocator, &tree_length.root, &env);
+    defer result_length.deinit();
+    std.debug.print("result: {any}\n", .{result_length.data});
+    try std.testing.expectEqual(.{ .integer = 3 }, result_length.data);
 
     // Test nested lists
-    var tree_get2 = try parse_to_tree(allocator, "list.get(1,[1, [2, 3], 4])");
-    defer tree_get2.deinit(allocator);
-    result = try evaluate(allocator, &tree_get2.root, &env);
-    std.debug.print("result: {any}\n", .{result});
+    var tree_nested = try parse_to_tree(allocator, "list.get([1, [2, 3], 4], 1)");
+    defer tree_nested.deinit(allocator);
+    var result_nested = try evaluate(allocator, &tree_nested.root, &env);
+    defer result_nested.deinit();
+    std.debug.print("result: [{any}, {any}]\n", .{ result_nested.data.list[0].data, result_nested.data.list[1].data });
 
     // Compare the values
-    try std.testing.expectEqual(@as(usize, 2), result.list.len);
-    try std.testing.expectEqual(Value{ .integer = 2 }, result.list[0]);
-    try std.testing.expectEqual(Value{ .integer = 3 }, result.list[1]);
+    try std.testing.expectEqual(@as(usize, 2), result_nested.data.list.len);
+    try std.testing.expectEqual(.{ .integer = 2 }, result_nested.data.list[0].data);
+    try std.testing.expectEqual(.{ .integer = 3 }, result_nested.data.list[1].data);
+
+    // Test list append
+    var tree_append = try parse_to_tree(allocator, "list.append( [2, 3], 1)");
+    defer tree_append.deinit(allocator);
+    var result_append = try evaluate(allocator, &tree_append.root, &env);
+    defer result_append.deinit();
+    try std.testing.expectEqual(.{ .integer = 2 }, result_append.data.list[0].data);
+    try std.testing.expectEqual(.{ .integer = 3 }, result_append.data.list[1].data);
+    try std.testing.expectEqual(.{ .integer = 1 }, result_append.data.list[2].data);
 }

@@ -5,7 +5,7 @@ const Allocator = std.mem.Allocator;
 
 // Helper function to convert Value to f64
 fn valueToFloat(value: Value) InterpreterError!f64 {
-    return switch (value) {
+    return switch (value.data) {
         .integer => |i| @as(f64, @floatFromInt(i)),
         .float => |f| f,
         else => error.TypeError,
@@ -14,7 +14,7 @@ fn valueToFloat(value: Value) InterpreterError!f64 {
 
 // Helper function to convert Value to f64
 fn valueToInt(value: Value) InterpreterError!i64 {
-    return switch (value) {
+    return switch (value.data) {
         .integer => |i| i,
         .float => |f| @as(i64, @intFromFloat(f)),
         else => error.TypeError,
@@ -22,23 +22,23 @@ fn valueToInt(value: Value) InterpreterError!i64 {
 }
 
 // Math functions
-pub fn builtin_int(args: []const Value) InterpreterError!Value {
+pub fn builtin_int(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
 
-    return Value{ .integer = try valueToInt(args[0]) };
+    return Value{ .data = .{ .integer = try valueToInt(args[0]) } };
 }
 
-pub fn builtin_float(args: []const Value) InterpreterError!Value {
+pub fn builtin_float(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
-    return Value{ .float = try valueToFloat(args[0]) };
+    return Value{ .data = .{ .float = try valueToFloat(args[0]) } };
 }
 
-pub fn builtin_bool(args: []const Value) InterpreterError!Value {
+pub fn builtin_bool(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
-    return Value{ .boolean = try valueToInt(args[0]) != 0 };
+    return Value{ .data = .{ .boolean = try valueToInt(args[0]) != 0 } };
 }
 
-pub fn min(args: []const Value) InterpreterError!Value {
+pub fn min(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len < 1) return error.InvalidArgCount;
 
     // Keep track of both the float value for comparison and the original value
@@ -56,7 +56,7 @@ pub fn min(args: []const Value) InterpreterError!Value {
     return min_orig;
 }
 
-pub fn max(args: []const Value) InterpreterError!Value {
+pub fn max(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len < 1) return error.InvalidArgCount;
 
     // Keep track of both the float value for comparison and the original value
@@ -74,77 +74,77 @@ pub fn max(args: []const Value) InterpreterError!Value {
     return max_orig;
 }
 
-pub fn log(args: []const Value) InterpreterError!Value {
+pub fn log(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
-    return Value{ .float = @log(x) };
+    return Value{ .data = .{ .float = @log(x) } };
 }
 
-pub fn log2(args: []const Value) InterpreterError!Value {
+pub fn log2(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
-    return Value{ .float = @log2(x) };
+    return Value{ .data = .{ .float = @log2(x) } };
 }
 
-pub fn log10(args: []const Value) InterpreterError!Value {
+pub fn log10(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
-    return Value{ .float = @log10(x) };
+    return Value{ .data = .{ .float = @log10(x) } };
 }
 
-pub fn exp(args: []const Value) InterpreterError!Value {
+pub fn exp(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
-    return Value{ .float = @exp(x) };
+    return Value{ .data = .{ .float = @exp(x) } };
 }
 
-pub fn sqrt(args: []const Value) InterpreterError!Value {
+pub fn sqrt(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
-    return Value{ .float = @sqrt(x) };
+    return Value{ .data = .{ .float = @sqrt(x) } };
 }
 
-pub fn mean(args: []const Value) InterpreterError!Value {
+pub fn mean(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len == 0) return error.InvalidArgCount;
 
     var sum: f64 = 0;
     for (args) |arg| {
         sum += try valueToFloat(arg);
     }
-    return Value{ .float = sum / @as(f64, @floatFromInt(args.len)) };
+    return Value{ .data = .{ .float = sum / @as(f64, @floatFromInt(args.len)) } };
 }
 
-pub fn abs(args: []const Value) InterpreterError!Value {
+pub fn abs(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
-    return switch (args[0]) {
-        .integer => Value{ .integer = @intFromFloat(@fabs(x)) },
-        .float => Value{ .float = @fabs(x) },
+    return switch (args[0].data) {
+        .integer => Value{ .data = .{ .integer = @intFromFloat(@fabs(x)) } },
+        .float => Value{ .data = .{ .float = @fabs(x) } },
         else => error.TypeError,
     };
 }
 
-pub fn ceil(args: []const Value) InterpreterError!Value {
+pub fn ceil(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
-    return Value{ .float = @ceil(x) };
+    return Value{ .data = .{ .float = @ceil(x) } };
 }
 
-pub fn floor(args: []const Value) InterpreterError!Value {
+pub fn floor(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
     const x = try valueToFloat(args[0]);
-    return Value{ .float = @floor(x) };
+    return Value{ .data = .{ .float = @floor(x) } };
 }
 
 // String functions
-fn strConcat(args: []const Value) InterpreterError!Value {
+fn strConcat(allocator: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len < 1) return error.InvalidArgCount;
 
     var buf = std.ArrayList(u8).init(allocator);
     errdefer buf.deinit();
 
     for (args) |arg| {
-        switch (arg) {
+        switch (arg.data) {
             .string => |s| try buf.appendSlice(s),
             .integer => |i| {
                 var temp_buf: [20]u8 = undefined;
@@ -165,22 +165,22 @@ fn strConcat(args: []const Value) InterpreterError!Value {
     }
 
     const result = buf.toOwnedSlice() catch return error.OutOfMemory;
-    return Value{ .string = result };
+    return Value{ .data = .{ .string = result }, .allocator = allocator };
 }
 
-fn strLength(args: []const Value) InterpreterError!Value {
+fn strLength(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
-    const str = switch (args[0]) {
+    const str = switch (args[0].data) {
         .string => |s| s,
         else => return error.TypeError,
     };
-    return Value{ .integer = @intCast(str.len) };
+    return Value{ .data = .{ .integer = @intCast(str.len) } };
 }
 
 // Date functions
-fn dateAddDays(args: []const Value) InterpreterError!Value {
+fn dateAddDays(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 2) return error.InvalidArgCount;
-    const date_str = switch (args[0]) {
+    const date_str = switch (args[0].data) {
         .date => |d| d,
         else => return error.TypeError,
     };
@@ -188,60 +188,57 @@ fn dateAddDays(args: []const Value) InterpreterError!Value {
     // Parse date, add days, format result
     var buf: [64]u8 = undefined;
     const result = std.fmt.bufPrint(&buf, "{s}", .{date_str}) catch return error.OutOfMemory;
-    return Value{ .date = result };
+    return Value{ .data = .{ .date = result } };
 }
 
 // List functions
-fn listLength(args: []const Value) InterpreterError!Value {
+fn listLength(_: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 1) return error.InvalidArgCount;
-    const list = switch (args[0]) {
+    const list = switch (args[0].data) {
         .list => |l| l,
         else => return error.TypeError,
     };
-    return Value{ .integer = @intCast(list.len) };
+    return Value{ .data = .{ .integer = @intCast(list.len) } };
 }
 
-fn listGet(args: []const Value) InterpreterError!Value {
+fn listGet(allocator: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 2) return error.InvalidArgCount;
-    const list = switch (args[1]) {
+    const list = switch (args[0].data) {
         .list => |l| l,
         else => return error.TypeError,
     };
-    return list[@intCast(args[0].integer)];
+    const index = @as(usize, @intCast(args[1].data.integer));
+    if (index >= list.len) return error.InvalidOperation;
+
+    // Clone the value to ensure proper memory management
+    return list[index].clone(allocator);
 }
 
-fn listAppend(args: []const Value) InterpreterError!Value {
+fn listAppend(allocator: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len != 2) return error.InvalidArgCount;
-    const list = switch (args[0]) {
+    const list = switch (args[0].data) {
         .list => |l| l,
         else => return error.TypeError,
     };
 
-    var new_list = allocator.alloc(Value, list.len + 1) catch return error.OutOfMemory;
+    var new_list = try allocator.alloc(Value, list.len + 1);
     @memcpy(new_list[0..list.len], list);
     new_list[list.len] = args[1];
 
-    return Value{ .list = new_list };
-}
-
-// Environment setup
-var allocator: Allocator = undefined;
-
-pub fn init(alloc: Allocator) void {
-    allocator = alloc;
+    return Value{ .data = .{ .list = new_list }, .allocator = allocator };
 }
 
 // Constants
 pub const constants = std.ComptimeStringMap(Value, .{
-    .{ "pi", Value{ .float = std.math.pi } },
-    .{ "e", Value{ .float = std.math.e } },
-    .{ "inf", Value{ .float = std.math.inf(f64) } },
-    .{ "tau", Value{ .float = std.math.tau } },
-    .{ "nan", Value{ .float = std.math.nan(f64) } },
+    .{ "pi", Value{ .data = .{ .float = std.math.pi } } },
+    .{ "e", Value{ .data = .{ .float = std.math.e } } },
+    .{ "inf", Value{ .data = .{ .float = std.math.inf(f64) } } },
+    .{ "tau", Value{ .data = .{ .float = std.math.tau } } },
+    .{ "nan", Value{ .data = .{ .float = std.math.nan(f64) } } },
 });
 
 // Function map
-pub const functions = std.ComptimeStringMap(*const fn ([]const Value) InterpreterError!Value, .{
+pub const functions = std.ComptimeStringMap(*const fn (Allocator, []const Value) InterpreterError!Value, .{
     //types
     .{ "int", builtin_int },
     .{ "float", builtin_float },
@@ -320,6 +317,6 @@ pub const functions = std.ComptimeStringMap(*const fn ([]const Value) Interprete
     // .{ "apply", apply_function },
 });
 
-pub fn get(name: []const u8) ?*const fn ([]const Value) InterpreterError!Value {
+pub fn get(name: []const u8) ?*const fn (Allocator, []const Value) InterpreterError!Value {
     return functions.get(name);
 }
