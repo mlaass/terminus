@@ -107,6 +107,13 @@ pub fn sqrt(args: []const Value) InterpreterError!Value {
     return Value{ .data = .{ .float = @sqrt(x) } };
 }
 
+pub fn pow(args: []const Value) InterpreterError!Value {
+    if (args.len != 2) return error.InvalidArgCount;
+    const x = try valueToFloat(args[0]);
+    const y = try valueToFloat(args[1]);
+    return Value{ .data = .{ .float = std.math.pow(f64, x, y) } };
+}
+
 pub fn mean(args: []const Value) InterpreterError!Value {
     if (args.len == 0) return error.InvalidArgCount;
 
@@ -597,6 +604,7 @@ pub const simple_functions = std.ComptimeStringMap(*const fn ([]const Value) Int
     .{ "log10", log10 },
     .{ "exp", exp },
     .{ "sqrt", sqrt },
+    .{ "pow", pow },
     // .{ "fsum", fsum },
     // .{ "gcd", gcd },
     // .{ "isqrt", isqrt },

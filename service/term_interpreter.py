@@ -286,6 +286,13 @@ builtin_env = {
     "apply": apply_function,
 }
 
+import service.term_parser as term_parser
+
+
+def evaluate_str(expression, env=None):
+    ast = term_parser.parse_to_tree(expression)
+    return evaluate(ast, env, join_builtin=False)
+
 
 def evaluate(ast, env=None, join_builtin=True):
     if env is None:

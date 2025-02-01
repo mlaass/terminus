@@ -337,6 +337,17 @@ fn compareValues(left: Value, right: Value, op: CompareOp) InterpreterError!Valu
                 .lte => cmp != .gt,
             };
         }
+
+        fn lists(a: []const Value, b: []const Value, operation: CompareOp) InterpreterError!bool {
+            if (operation != .eq and operation != .neq) return error.TypeError;
+            if (a.len != b.len) return false;
+
+            for (a, b) |item_a, item_b| {
+                const comparison = try compareValues(item_a, item_b, .eq);
+                if (!comparison.data.boolean) return operation == .neq;
+            }
+            return operation == .eq;
+        }
     };
 
     return switch (left.data) {
@@ -349,6 +360,10 @@ fn compareValues(left: Value, right: Value, op: CompareOp) InterpreterError!Valu
         },
         .date => |d1| switch (right.data) {
             .date => |d2| Value{ .data = .{ .boolean = Compare.strings(d1, d2, op) } },
+            else => return error.TypeError,
+        },
+        .list => |l1| switch (right.data) {
+            .list => |l2| Value{ .data = .{ .boolean = try Compare.lists(l1, l2, op) } },
             else => return error.TypeError,
         },
         else => return error.TypeError,
