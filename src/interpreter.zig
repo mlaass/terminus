@@ -337,6 +337,17 @@ fn compareValues(left: Value, right: Value, op: CompareOp) InterpreterError!Valu
                 .lte => cmp != .gt,
             };
         }
+        // fn dates(a: []const u8, b: []const u8, operation: CompareOp) bool {
+        //     const cmp = std.mem.order(u8, a, b);
+        //     return switch (operation) {
+        //         .gt => cmp == .gt,
+        //         .lt => cmp == .lt,
+        //         .eq => cmp == .eq,
+        //         .neq => cmp != .eq,
+        //         .gte => cmp != .lt,
+        //         .lte => cmp != .gt,
+        //     };
+        // }
 
         fn lists(a: []const Value, b: []const Value, operation: CompareOp) InterpreterError!bool {
             if (operation != .eq and operation != .neq) return error.TypeError;
@@ -358,10 +369,10 @@ fn compareValues(left: Value, right: Value, op: CompareOp) InterpreterError!Valu
             .string => |s2| Value{ .data = .{ .boolean = Compare.strings(s1, s2, op) } },
             else => return error.TypeError,
         },
-        .date => |d1| switch (right.data) {
-            .date => |d2| Value{ .data = .{ .boolean = Compare.strings(d1, d2, op) } },
-            else => return error.TypeError,
-        },
+        // .date => |d1| switch (right.data) {
+        //     .date => |d2| Value{ .data = .{ .boolean = Compare.strings(d1, d2, op) } },
+        //     else => return error.TypeError,
+        // },
         .list => |l1| switch (right.data) {
             .list => |l2| Value{ .data = .{ .boolean = try Compare.lists(l1, l2, op) } },
             else => return error.TypeError,

@@ -7,6 +7,25 @@ const calcUtf16LeLen = @import("std").unicode.calcUtf16LeLen;
 const parse_to_tree = @import("parser.zig").parse_to_tree;
 const printNodeTree = @import("main.zig").printNodeTree;
 // Helper function to convert Value to f64
+/// Converts a Value to a float.
+///
+/// Arguments:
+///     value: The Value to convert
+///
+/// Returns:
+///     f64: The float value
+///
+/// Errors:
+///     error.TypeError: If the value cannot be converted to a float
+///
+/// Example:
+/// ```zig
+/// const v1 = Value{ .data = .{ .integer = 42 } };
+/// try expect(valueToFloat(v1) == 42.0);
+///
+/// const v2 = Value{ .data = .{ .float = 3.14 } };
+/// try expect(valueToFloat(v2) == 3.14);
+/// ```
 fn valueToFloat(value: Value) InterpreterError!f64 {
     return switch (value.data) {
         .integer => |i| @as(f64, @floatFromInt(i)),
@@ -41,6 +60,31 @@ pub fn coreBool(_: Allocator, args: []const Value) InterpreterError!Value {
 }
 
 // Math functions
+/// Returns the minimum value from a list of numbers.
+///
+/// Takes a list of values and returns the smallest one. All values are converted
+/// to floats for comparison. The original value type is preserved in the result.
+///
+/// Arguments:
+///     args: Slice of values to compare
+///
+/// Returns:
+///     Value: The smallest value from the input
+///
+/// Errors:
+///     error.InvalidArgCount: If no arguments are provided
+///     error.TypeError: If any argument cannot be converted to a float
+///
+/// Example:
+/// ```zig
+/// const nums = &[_]Value{
+///     Value{ .data = .{ .integer = 5 } },
+///     Value{ .data = .{ .integer = 3 } },
+///     Value{ .data = .{ .integer = 7 } },
+/// };
+/// const result = try min(nums);
+/// try expect(result.data.integer == 3);
+/// ```
 pub fn min(args: []const Value) InterpreterError!Value {
     if (args.len < 1) return error.InvalidArgCount;
 
@@ -59,6 +103,15 @@ pub fn min(args: []const Value) InterpreterError!Value {
     return min_orig;
 }
 
+/// Returns the maximum value from a list of numbers.
+/// Accepts integers and floats, converting all values to floats for comparison.
+/// Returns error.InvalidArgCount if no arguments are provided.
+/// Returns error.TypeError if any argument cannot be converted to a float.
+/// Examples:
+///   max(5, 3, 7) => 7
+///   max(2.5, 1, 4.7) => 4.7
+///   max() => error.InvalidArgCount
+///   max("hello", 42) => error.TypeError
 pub fn max(args: []const Value) InterpreterError!Value {
     if (args.len < 1) return error.InvalidArgCount;
 
@@ -147,6 +200,14 @@ pub fn floor(args: []const Value) InterpreterError!Value {
 }
 
 // String functions
+/// Concatenates a list of strings or string-convertible values.
+/// Each argument is converted to a string representation before concatenation.
+/// Returns error.InvalidArgCount if no arguments are provided.
+/// Returns error.TypeError if any argument cannot be converted to a string.
+/// Examples:
+///   str.concat("hello", " ", "world") => "hello world"
+///   str.concat(42, " ", true) => "42 true"
+///   str.concat() => error.InvalidArgCount
 fn strConcat(allocator: Allocator, args: []const Value) InterpreterError!Value {
     if (args.len < 1) return error.InvalidArgCount;
 

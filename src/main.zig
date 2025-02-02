@@ -47,17 +47,17 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     if (args.len < 2) {
-        std.debug.print("Usage: {s} [--parse] [--sy] [--tree] \"expression\"\n", .{args[0]});
+        std.debug.print("Usage: {s} [--parse] [--rpn] [--tree] \"expression\"\n", .{args[0]});
         std.debug.print("Options:\n", .{});
         std.debug.print("  --parse  Print tokenization results\n", .{});
-        std.debug.print("  --sy     Print shunting yard output\n", .{});
+        std.debug.print("  --rpn    Print reverse polish notation output\n", .{});
         std.debug.print("  --tree   Print parse tree\n", .{});
         std.debug.print("\nExample: {s} --tree \"5 + 3 * 2\"\n", .{args[0]});
         std.process.exit(1);
     }
 
     var show_parse = false;
-    var show_sy = false;
+    var show_rpn = false;
     var show_tree = false;
     var expression: ?[]const u8 = null;
 
@@ -65,8 +65,8 @@ pub fn main() !void {
     for (args[1..]) |arg| {
         if (std.mem.eql(u8, arg, "--parse")) {
             show_parse = true;
-        } else if (std.mem.eql(u8, arg, "--sy")) {
-            show_sy = true;
+        } else if (std.mem.eql(u8, arg, "--rpn")) {
+            show_rpn = true;
         } else if (std.mem.eql(u8, arg, "--tree")) {
             show_tree = true;
         } else if (expression == null) {
@@ -95,8 +95,8 @@ pub fn main() !void {
         }
     }
 
-    // Debug: Show shunting yard output
-    if (show_sy) {
+    // Debug: Show reverse polish notation output
+    if (show_rpn) {
         const tokens = try tokenize(allocator, expression.?);
         defer {
             for (tokens) |token| {
@@ -113,7 +113,7 @@ pub fn main() !void {
             allocator.free(rpn);
         }
 
-        std.debug.print("\nShunting yard output (RPN):\n", .{});
+        std.debug.print("\nReverse Polish Notation output (RPN):\n", .{});
         for (rpn, 0..) |node, i| {
             std.debug.print("{d}: ", .{i + 1});
             printNode(node);
